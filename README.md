@@ -1,6 +1,5 @@
-# Geoalbum
-Plugin for Piwigo to create a smart album from a map selection
 Ce plugin est distribué sous licence [GNU GPL-2.0](LICENSE).
+
 # Geo Album — Plugin Piwigo
 
 Crée et alimente automatiquement des albums Piwigo à partir de zones géographiques dessinées sur une carte — sans SmartAlbums, sans configuration complexe : vous dessinez une zone, vous la reliez à un album, et toutes les photos géolocalisées qui s'y trouvent (déjà présentes ou importées plus tard) y sont assignées automatiquement.
