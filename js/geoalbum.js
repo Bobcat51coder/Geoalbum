@@ -113,6 +113,45 @@ function gabCountry(key){
     if(b) _map.fitBounds(b);
 }
 
+function _gabEsc(s){
+    var d=document.createElement('div');
+    d.textContent = s==null ? '' : String(s);
+    return d.innerHTML;
+}
+
+// Recherche de lieu par nom (géocodage), via Nominatim/OpenStreetMap —
+// service gratuit, sans clé API. Reprend le même comportement qu'OSM Map Plus.
+function _gabGeocode(query, drop, input){
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&q=' + encodeURIComponent(query), {
+        headers: { 'Accept-Language': 'fr' }
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(results){
+        if(!results || !results.length){
+            drop.innerHTML = '<div class="osm-geo-item osm-geo-empty">Aucun résultat</div>';
+            drop.style.display = 'block'; return;
+        }
+        drop.innerHTML = results.map(function(r){
+            return '<div class="osm-geo-item" data-lat="'+r.lat+'" data-lon="'+r.lon+'">'
+                 + _gabEsc(r.display_name) + '</div>';
+        }).join('');
+        drop.style.display = 'block';
+        drop.querySelectorAll('.osm-geo-item[data-lat]').forEach(function(item){
+            item.addEventListener('click', function(){
+                var lat = parseFloat(this.dataset.lat);
+                var lon = parseFloat(this.dataset.lon);
+                drop.style.display = 'none';
+                input.value = this.textContent;
+                _map.setView([lat, lon], 12);
+            });
+        });
+    })
+    .catch(function(){
+        drop.innerHTML = '<div class="osm-geo-item osm-geo-empty">Erreur géocodage</div>';
+        drop.style.display = 'block';
+    });
+}
+
 function gabEurope(){
     gabContinent('europe');
 }
@@ -446,6 +485,23 @@ function _build(){
 
     var selZoom = document.getElementById('sel-zoom');
     if(selZoom) selZoom.addEventListener('change', function(){ gabZoom(this.value); });
+
+    // Géocodeur (recherche de lieu) — même service et même comportement
+    // qu'OSM Map Plus (Nominatim/OpenStreetMap, gratuit, sans clé).
+    var geoInput = document.getElementById('gab-geocoder');
+    var geoDrop  = document.getElementById('gab-geocoder-results');
+    var geoTimer = null;
+    if(geoInput && geoDrop){
+        geoInput.addEventListener('input', function(){
+            clearTimeout(geoTimer);
+            var q = this.value.trim();
+            if(q.length < 3){ geoDrop.style.display='none'; return; }
+            geoTimer = setTimeout(function(){ _gabGeocode(q, geoDrop, geoInput); }, 600);
+        });
+        document.addEventListener('click', function(e){
+            if(!geoInput.contains(e.target) && !geoDrop.contains(e.target)) geoDrop.style.display='none';
+        });
+    }
 
     var selAlbum = document.getElementById('flt');
     if(selAlbum) selAlbum.addEventListener('change', function(){ gabFilter(this.value); });
