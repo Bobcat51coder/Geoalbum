@@ -1,6 +1,6 @@
 <?php
 /*
- * Geo Album v4.0 — Page de gestion (admin uniquement)
+ * Geo Album v1.0.3 — Page de gestion (admin uniquement)
  */
 if (!defined('PHPWG_ROOT_PATH')) define('PHPWG_ROOT_PATH', '../../');
 
@@ -28,7 +28,7 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '4.0.29');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.3');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
 
@@ -360,6 +360,13 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
 /* Messages */
 .ok{background:#e6f4ea;border:1px solid #81c995;color:#1e4620;padding:7px 11px;border-radius:3px;margin:7px 12px;font-size:12px}
 .er{background:#fce8e6;border:1px solid #f28b82;color:#7c1d11;padding:7px 11px;border-radius:3px;margin:7px 12px;font-size:12px}
+/* Géocodeur (recherche de lieu) — mêmes classes qu'OSM Map Plus */
+.osm-geocoder-wrapper{position:relative;display:inline-flex;align-items:center;gap:6px}
+#gab-geocoder{width:170px;padding:3px 6px;font-size:12px;border:1px solid #bbb;border-radius:3px}
+.osm-geocoder-dropdown{display:none;position:absolute;top:calc(100% + 4px);left:0;z-index:1100;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.15);max-height:260px;overflow-y:auto;min-width:280px}
+.osm-geo-item{padding:8px 12px;font-size:0.82rem;cursor:pointer;border-bottom:1px solid #f0f0f0;line-height:1.3}
+.osm-geo-item:hover{background:#f0f6ff}
+.osm-geo-empty{color:#888;cursor:default}
 </style>
 </head><body>
 
@@ -380,6 +387,10 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
       <button type="button" id="btn-polygon" onclick="gabDraw('polygon')">⬡ Polygone</button>
       <button type="button"                  onclick="gabClear()"          class="del">✕ Effacer</button>
       <button type="button"                  onclick="gabFit()">⊕ Centrer</button>
+      <span class="osm-geocoder-wrapper">
+        <input type="text" id="gab-geocoder" placeholder="🔎 Rechercher un lieu…" autocomplete="off">
+        <div id="gab-geocoder-results" class="osm-geocoder-dropdown"></div>
+      </span>
       <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer" title="Regrouper les points proches en bulles chiffrées (plus lisible, mais moins précis pour tracer une zone)">
         <input type="checkbox" id="chk-cluster" checked onchange="gabToggleCluster(this.checked)">
         Regrouper les points
