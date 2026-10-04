@@ -35,6 +35,18 @@
   </p>
   {/if}
 
+  <h3>Fond de carte par défaut</h3>
+  <p>Fond affiché à l'ouverture de la page « Gérer les zones géographiques ». Il reste modifiable à tout moment depuis la barre de la carte.</p>
+  <form method="post" action="">
+    {foreach from=$GAB_TILE_CHOICES key=tile_key item=tile_label}
+    <label style="margin-right:14px;cursor:pointer">
+      <input type="radio" name="geoalbum_default_tile" value="{$tile_key}"{if $tile_key == $GAB_DEFAULT_TILE} checked{/if}> {$tile_label}
+    </label>
+    {/foreach}
+    <button type="submit" class="btn a">Enregistrer</button>
+  </form>
+
+
   <p>
     <a class="button" href="{$GAB_MANAGE_URL}">→ Gérer les zones géographiques (version {$GAB_VERSION})</a>
   </p>
