@@ -142,6 +142,7 @@ function _gabGeocode(query, drop, input){
                 var lon = parseFloat(this.dataset.lon);
                 drop.style.display = 'none';
                 input.value = this.textContent;
+                _gabGeoTarget = {lat: lat, lon: lon, label: input.value.trim()};
                 _map.setView([lat, lon], 12);
             });
         });
@@ -318,12 +319,75 @@ function gabReload(fit){
 }
 
 // Compat : anciens noms encore appelés depuis geoalbum.php
-function gabApplyDates(){ gabReload(true); }
+// Lieu choisi dans la recherche (null tant qu'aucun lieu n'est validé)
+var _gabGeoTarget = null;
+
+// Bouton "Valider" : applique TOUS les réglages de la barre en une fois —
+// lieu saisi (recentrage), album et période (rechargement des points).
+// Les listes Continent / Pays / Zoom s'appliquent déjà dès qu'on les change.
+function gabValidate(){
+    gabSyncDateBox(true);
+    var gi = document.getElementById('gab-geocoder');
+    var q  = gi ? gi.value.trim() : '';
+
+    // Pas de lieu saisi : album + période, puis cadrage sur l'ensemble des points
+    if(q.length < 3){
+        _gabGeoTarget = null;
+        gabReload(true);
+        return;
+    }
+
+    function go(t){
+        _gabGeoTarget = t;
+        if(gi) gi.value = t.label;
+        gabReload(false);                    // pas de recadrage automatique sur tous les points
+        _map.setView([t.lat, t.lon], 12);    // le lieu demandé l'emporte
+    }
+
+    // Lieu déjà choisi dans les suggestions et inchangé
+    if(_gabGeoTarget && _gabGeoTarget.label === q){ go(_gabGeoTarget); return; }
+
+    // Lieu tapé sans choisir de suggestion : premier résultat de la recherche
+    fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q), {
+        headers: { 'Accept-Language': 'fr' }
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+        if(res && res.length){
+            go({lat: parseFloat(res[0].lat), lon: parseFloat(res[0].lon), label: res[0].display_name});
+        } else {
+            var drop = document.getElementById('gab-geocoder-results');
+            if(drop){ drop.innerHTML = '<div class="osm-geo-item osm-geo-empty">Aucun résultat pour ce lieu</div>'; drop.style.display='block'; }
+            gabReload(true);
+        }
+    })
+    .catch(function(){ gabReload(true); });
+}
+
+// Compat : ancien nom encore utilisé ailleurs
+function gabApplyDates(){ gabValidate(); }
+
+// Résumé de la période du filtre dans le formulaire de zone ; avec autoTick, la
+// case "Limiter l'album à la période" suit le filtre (cochée s'il y a une période).
+function gabSyncDateBox(autoTick){
+    var f=((document.getElementById('dt-from')||{}).value||'').trim();
+    var t=((document.getElementById('dt-to')||{}).value||'').trim();
+    var fl=(document.getElementById('sel-datefield')||{}).value||'creation';
+    var box=document.getElementById('gab-use-dates');
+    var sum=document.getElementById('gab-dates-summary');
+    if(box && autoTick) box.checked = !!(f||t);
+    if(sum){
+        if(!(f||t)) sum.textContent='Aucune période saisie dans le filtre.';
+        else sum.textContent=(fl==='available'?"Date d'ajout":'Prise de vue')+' : '+
+            (f&&t ? f+' \u2192 '+t : (f ? 'depuis '+f : "jusqu'à "+t));
+    }
+}
 
 function gabResetDates(){
     var f=document.getElementById('dt-from'), t=document.getElementById('dt-to');
     if(f) f.value=''; if(t) t.value='';
     gabReload(true);
+    gabSyncDateBox(true);
 }
 
 // Réinitialise tout : "Tous les albums" + période vidée
@@ -334,7 +398,10 @@ function gabResetAll(){
     if(f) f.value=''; if(t) t.value='';
     var c=document.getElementById('dt-count');
     if(c) c.textContent='';
+    var gi=document.getElementById('gab-geocoder'); if(gi) gi.value='';
+    _gabGeoTarget = null;
     gabReload(true);
+    gabSyncDateBox(true);
 }
 
 function _gabMakeMarker(p, clustered){
@@ -444,6 +511,15 @@ function _build(){
         }catch(e){}
     });
 
+    var _ed = (GAB_EXISTING && GAB_EXISTING.dates) ? GAB_EXISTING.dates : null;
+    if(_ed && (_ed.from || _ed.to)){
+        // Zone avec période enregistrée : on la remet dans le filtre de la barre
+        var _sf=document.getElementById('sel-datefield'), _df=document.getElementById('dt-from'), _dt=document.getElementById('dt-to');
+        if(_sf) _sf.value = (_ed.field==='available') ? 'available' : 'creation';
+        if(_df) _df.value = _ed.from || '';
+        if(_dt) _dt.value = _ed.to || '';
+        gabReload(false);
+    } else {
     // Charger toutes les photos GPS — format compact [[id,lat,lng],...]
     _loading(true);
     _ajax(GAB_AJAX_URL+'0', function(data){
@@ -461,12 +537,14 @@ function _build(){
             });
             idx+=CHUNK;
             if(idx<photos.length){requestAnimationFrame(addChunk);return;}
-            if(!GAB_EXISTING) gabFit();
+            if(!GAB_EXISTING && !GAB_FOCUS) gabFit();
         }
         requestAnimationFrame(addChunk);
     });
+    }
 
     if(GAB_EXISTING) _restoreZone(GAB_EXISTING.coords, GAB_EXISTING.type);
+    else if(typeof GAB_FOCUS!=='undefined' && GAB_FOCUS) _gabFocusZone(GAB_FOCUS.coords, GAB_FOCUS.type);
 
     // Lier les sélecteurs via JS (plus fiable que onchange inline)
     var selContinent = document.getElementById('sel-continent');
@@ -474,6 +552,22 @@ function _build(){
 
     var selCountry = document.getElementById('sel-country');
     if(selCountry) selCountry.addEventListener('change', function(){ gabCountry(this.value); this.value=''; });
+
+    // Période : résumé dans le formulaire + copie dans les champs cachés à l'envoi
+    ['dt-from','dt-to'].forEach(function(id){
+        var el=document.getElementById(id);
+        if(el) el.addEventListener('input', function(){ gabSyncDateBox(false); });
+    });
+    var _sdf=document.getElementById('sel-datefield');
+    if(_sdf) _sdf.addEventListener('change', function(){ gabSyncDateBox(false); });
+    gabSyncDateBox(false);
+    var _gform=document.getElementById('gab-form');
+    if(_gform) _gform.addEventListener('submit', function(){
+        var g=function(i){return (document.getElementById(i)||{}).value||'';};
+        document.getElementById('gab-dfield').value = g('sel-datefield');
+        document.getElementById('gab-dfrom').value  = g('dt-from');
+        document.getElementById('gab-dto').value    = g('dt-to');
+    });
 
     // Validation du filtre période avec la touche Entrée
     ['dt-from','dt-to'].forEach(function(id){
@@ -492,6 +586,9 @@ function _build(){
     var geoDrop  = document.getElementById('gab-geocoder-results');
     var geoTimer = null;
     if(geoInput && geoDrop){
+        geoInput.addEventListener('keydown', function(e){
+            if(e.key==='Enter'){ e.preventDefault(); clearTimeout(geoTimer); geoDrop.style.display='none'; gabValidate(); }
+        });
         geoInput.addEventListener('input', function(){
             clearTimeout(geoTimer);
             var q = this.value.trim();
@@ -530,6 +627,19 @@ function _build(){
     });
 
     setTimeout(function(){ _map.invalidateSize(); }, 200);
+}
+
+// Recadre la carte sur une zone (sans la passer en mode édition)
+function _gabFocusZone(coords, type){
+    if(!_map||!coords||!coords.length) return;
+    var b;
+    try{
+        if(type==='bbox'&&coords.length>=2)
+            b=L.latLngBounds([[coords[0].lat,coords[0].lng],[coords[1].lat,coords[1].lng]]);
+        else
+            b=L.latLngBounds(coords.map(function(c){return[c.lat,c.lng];}));
+        _map.fitBounds(b.pad(0.1));
+    }catch(e){}
 }
 
 function _restoreZone(coords, type){
