@@ -102,3 +102,102 @@ function gab_get_photo_ids_in_zone($zone)
     }
     return $ids;
 }
+
+/* Fonds de carte proposés (clé => libellé) ; 'carto' est le choix par défaut. */
+function gab_tile_choices()
+{
+    return array(
+        'carto'     => 'Carto',
+        'osm'       => 'OSM',
+        'satellite' => 'Satellite',
+        'topo'      => 'Topo',
+    );
+}
+
+/* Fond de carte par défaut configuré (repli sur 'carto' si valeur inconnue). */
+function gab_default_tile()
+{
+    global $conf;
+    $k = isset($conf['geoalbum_default_tile']) ? (string)$conf['geoalbum_default_tile'] : 'carto';
+    $choices = gab_tile_choices();
+    return isset($choices[$k]) ? $k : 'carto';
+}
+
+/* Normalise une saisie de date partielle vers une borne SQL complète.
+ * Accepte 1954, 1954-06, 1954-06-21 et le format français 06/1954, 21/06/1954.
+ * $end=false -> début de période ; $end=true -> fin de période. '' si invalide. */
+function gab_date_bound($v, $end)
+{
+    $v = trim((string)$v);
+    if ($v === '') return '';
+    $v = str_replace('.', '-', str_replace('/', '-', $v));
+
+    if (preg_match('/^(\d{4})$/', $v, $m))
+        return $end ? $m[1].'-12-31 23:59:59' : $m[1].'-01-01 00:00:00';
+
+    if (preg_match('/^(\d{4})-(\d{1,2})$/', $v, $m)) {
+        $mo = (int)$m[2]; if ($mo < 1 || $mo > 12) return '';
+        $mo2 = str_pad($mo, 2, '0', STR_PAD_LEFT);
+        if (!$end) return $m[1].'-'.$mo2.'-01 00:00:00';
+        return $m[1].'-'.$mo2.'-'.(int)date('t', mktime(0,0,0,$mo,1,(int)$m[1])).' 23:59:59';
+    }
+
+    if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $v, $m)) {
+        if (!checkdate((int)$m[2], (int)$m[3], (int)$m[1])) return '';
+        return $m[1].'-'.str_pad($m[2],2,'0',STR_PAD_LEFT).'-'.str_pad($m[3],2,'0',STR_PAD_LEFT)
+             .($end ? ' 23:59:59' : ' 00:00:00');
+    }
+
+    if (preg_match('/^(\d{1,2})-(\d{4})$/', $v, $m)) {
+        $mo = (int)$m[1]; if ($mo < 1 || $mo > 12) return '';
+        $mo2 = str_pad($mo, 2, '0', STR_PAD_LEFT);
+        if (!$end) return $m[2].'-'.$mo2.'-01 00:00:00';
+        return $m[2].'-'.$mo2.'-'.(int)date('t', mktime(0,0,0,$mo,1,(int)$m[2])).' 23:59:59';
+    }
+
+    if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})$/', $v, $m)) {
+        if (!checkdate((int)$m[2], (int)$m[1], (int)$m[3])) return '';
+        return $m[3].'-'.str_pad($m[2],2,'0',STR_PAD_LEFT).'-'.str_pad($m[1],2,'0',STR_PAD_LEFT)
+             .($end ? ' 23:59:59' : ' 00:00:00');
+    }
+    return '';
+}
+
+/* Fragment SQL " AND ..." correspondant à la période enregistrée avec la zone
+ * ('' si la zone n'a pas de période). $alias = préfixe de table, ex. 'i.' */
+function gab_zone_date_sql($zone, $alias = '')
+{
+    $from = isset($zone['date_from']) ? $zone['date_from'] : '';
+    $to   = isset($zone['date_to'])   ? $zone['date_to']   : '';
+    $col  = $alias . ((isset($zone['date_field']) && $zone['date_field'] === 'available')
+                      ? 'date_available' : 'date_creation');
+    $sql = '';
+    $f = gab_date_bound($from, false);
+    $t = gab_date_bound($to, true);
+    if ($f !== '') $sql .= ' AND ' . $col . " >= '" . $f . "'";
+    if ($t !== '') $sql .= ' AND ' . $col . " <= '" . $t . "'";
+    return $sql;
+}
+
+/* La photo respecte-t-elle la période de la zone ? (vrai si pas de période) */
+function gab_image_in_period($image_id, $zone)
+{
+    $sql = gab_zone_date_sql($zone);
+    if ($sql === '') return true;
+    $r = pwg_db_fetch_assoc(pwg_query('SELECT COUNT(*) AS n FROM ' . IMAGES_TABLE
+        . ' WHERE id=' . (int)$image_id . $sql));
+    return $r && (int)$r['n'] > 0;
+}
+
+/* Libellé lisible de la période d'une zone ('' si aucune). */
+function gab_zone_period_label($zone)
+{
+    $from = isset($zone['date_from']) ? $zone['date_from'] : '';
+    $to   = isset($zone['date_to'])   ? $zone['date_to']   : '';
+    if ($from === '' && $to === '') return '';
+    $what = (isset($zone['date_field']) && $zone['date_field'] === 'available') ? "Date d'ajout" : 'Prise de vue';
+    if ($from !== '' && $to !== '') $range = $from . ' → ' . $to;
+    elseif ($from !== '')           $range = 'depuis ' . $from;
+    else                            $range = "jusqu'à " . $to;
+    return $what . ' : ' . $range;
+}
