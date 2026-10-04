@@ -29,6 +29,7 @@ Crée et alimente automatiquement des albums Piwigo à partir de zones géograph
 | Option | Description |
 |---|---|
 | Clé API CartoDB | Nécessaire depuis le 26/08/2026 pour le fond de carte « Carto Voyager » (gratuite sur [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/)). Partagée automatiquement avec OSM Map Plus si ce dernier en a une renseignée ; sinon, clé propre saisie ici. |
+| Fond de carte par défaut | Fond affiché à l'ouverture de la page de gestion des zones : Carto (précoché par défaut), OSM, Satellite ou Topo. Modifiable ensuite à la volée depuis la barre de la carte. |
 
 ## Crédits
 
@@ -38,3 +39,12 @@ Bobcat-Fr
 **Développement assisté par IA**
 Code généré par [Claude](https://claude.ai) (Anthropic) via une session de développement itératif —
 spécifications, corrections et validation assurées par Bobcat-Fr.
+
+## Période enregistrée avec la zone
+
+Le filtre de dates de la barre de la carte (prise de vue ou date d'ajout, bornes « depuis » / « jusqu'à ») peut être enregistré avec la zone : cochez « Limiter l'album à la période du filtre » dans le formulaire avant d'enregistrer. La période est ensuite appliquée à chaque ajout de photo et à chaque synchronisation (manuelle, « Tout sync », réactivation, resynchronisation automatique) : une photo hors période n'entre pas dans l'album, et une photo déjà présente mais hors période en est retirée à la synchronisation. La période s'affiche sous le nom de la zone dans la liste (📅) et se retrouve dans la barre de filtre en modification.
+
+## Sécurité des albums existants
+
+Le plugin ne retire d'un album que les photos qu'il y a lui-même ajoutées (suivi dans la table `geo_zone_photos`) : les photos déjà présentes dans un album, rangées à la main ou par un autre outil, ne sont jamais retirées par une synchronisation, une désactivation ou la suppression de la zone. Une photo n'est en outre jamais retirée si elle n'appartient à aucun autre album (pas d'orphelines).
+
