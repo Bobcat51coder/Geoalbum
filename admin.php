@@ -2,8 +2,8 @@
 /*
  * Page "Paramètres" (admin.php?page=plugin-geoalbum), attendue par Piwigo
  * du fait de "Has Settings: true" dans main.inc.php. La gestion des zones se
- * fait sur sa page dédiée (geoalbum.php) ; cette page ne gère qu'un seul
- * réglage : la clé API CartoDB. Si une clé est renseignée côté OSM Map Plus,
+ * fait sur sa page dédiée (geoalbum.php) ; cette page gère deux
+ * réglages : la clé API CartoDB et le fond de carte affiché par défaut. Si une clé est renseignée côté OSM Map Plus,
  * elle est utilisée en priorité (peu importe si ce plugin est actif ou non) ;
  * sinon la clé propre saisie ici est utilisée — ce qui rend Geo Album
  * autonome, sans dépendance obligatoire à OSM Map Plus.
@@ -34,6 +34,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['geoalbum_carto_api_ke
     $gab_infos[] = 'Clé API enregistrée.';
 }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['geoalbum_default_tile'])) {
+    $choices = gab_tile_choices();
+    $wanted  = (string)$_POST['geoalbum_default_tile'];
+    if (isset($choices[$wanted])) {
+        conf_update_param('geoalbum_default_tile', $wanted);
+        $conf['geoalbum_default_tile'] = $wanted;
+        $gab_infos[] = 'Fond de carte par défaut enregistré.';
+    }
+}
+
 $gab_own_key = gab_clean_key($conf['geoalbum_carto_api_key'] ?? '');
 $gab_osm_key = gab_clean_key($conf['osm_map_carto_api_key'] ?? '');
 // Clé effectivement utilisée par la carte, selon la même priorité que geoalbum.php
@@ -53,6 +63,9 @@ $template->assign(array(
     'GAB_OWN_KEY'          => $gab_own_key,
     'GAB_EFFECTIVE_SOURCE' => $gab_effective_source,
     'GAB_INFOS'            => $gab_infos,
+    'GAB_TILE_CHOICES'     => gab_tile_choices(),
+    'GAB_DEFAULT_TILE'     => gab_default_tile(),
+    'GAB_HELP_IMG_URL'     => get_root_url() . 'plugins/' . GAB_FOLDER . '/template/images/screenshot1.jpg',
 ));
 
 // Indispensable : sans cet appel, le template est enregistré mais jamais
