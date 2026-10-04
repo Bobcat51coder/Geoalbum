@@ -13,25 +13,50 @@ function gab_insert_photo($image_id, $album_id)
         . ' AND latitude IS NOT NULL AND latitude!=0'
         . ' AND longitude IS NOT NULL AND longitude!=0'));
     if (!$r) return;
-    // Pas de doublon
+    // Déjà dans l'album (ajoutée par l'utilisateur ou un autre outil) : on n'y touche pas
+    // et on ne la "revendique" pas, donc le plugin ne la retirera jamais.
     $n = pwg_db_fetch_assoc(pwg_query(
         'SELECT COUNT(*) AS n FROM ' . IMAGE_CATEGORY_TABLE
         . ' WHERE image_id=' . $image_id . ' AND category_id=' . $album_id));
     if ((int)$n['n'] > 0) return;
     pwg_query('INSERT INTO ' . IMAGE_CATEGORY_TABLE
         . ' (image_id, category_id) VALUES (' . $image_id . ',' . $album_id . ')');
+    // Mémorise que c'est le plugin qui a ajouté cette photo
+    pwg_query('INSERT IGNORE INTO ' . GAB_MEMBERS_TABLE
+        . ' (album_id, image_id) VALUES (' . $album_id . ',' . $image_id . ')');
 }
 
+/* Retire une photo d'un album, SEULEMENT si le plugin l'y avait ajoutée et si elle
+ * reste classée dans au moins un autre album (jamais de photo orpheline).
+ * Retourne true si la photo a été retirée. */
 function gab_remove_photo($image_id, $album_id)
 {
+    $image_id = (int)$image_id; $album_id = (int)$album_id;
+    $own = pwg_db_fetch_assoc(pwg_query(
+        'SELECT COUNT(*) AS n FROM ' . GAB_MEMBERS_TABLE
+        . ' WHERE album_id=' . $album_id . ' AND image_id=' . $image_id));
+    if ((int)$own['n'] === 0) return false;
+    $other = pwg_db_fetch_assoc(pwg_query(
+        'SELECT COUNT(*) AS n FROM ' . IMAGE_CATEGORY_TABLE
+        . ' WHERE image_id=' . $image_id . ' AND category_id!=' . $album_id));
+    if ((int)$other['n'] === 0) return false;
     pwg_query('DELETE FROM ' . IMAGE_CATEGORY_TABLE
-        . ' WHERE image_id=' . (int)$image_id . ' AND category_id=' . (int)$album_id);
+        . ' WHERE image_id=' . $image_id . ' AND category_id=' . $album_id);
+    pwg_query('DELETE FROM ' . GAB_MEMBERS_TABLE
+        . ' WHERE album_id=' . $album_id . ' AND image_id=' . $image_id);
+    return true;
 }
 
+/* Vide l'album des photos ajoutées par le plugin (celles de l'utilisateur restent). */
 function gab_clear_album($album_id)
 {
-    pwg_query('DELETE FROM ' . IMAGE_CATEGORY_TABLE
-        . ' WHERE category_id=' . (int)$album_id);
+    $album_id = (int)$album_id;
+    $res = pwg_query('SELECT image_id FROM ' . GAB_MEMBERS_TABLE . ' WHERE album_id=' . $album_id);
+    $ids = array();
+    while ($r = pwg_db_fetch_assoc($res)) $ids[] = (int)$r['image_id'];
+    foreach ($ids as $id) gab_remove_photo($id, $album_id);
+    // Plus de suivi pour cet album (zone supprimée ou désactivée)
+    pwg_query('DELETE FROM ' . GAB_MEMBERS_TABLE . ' WHERE album_id=' . $album_id);
 }
 
 function gab_refresh($album_id)
@@ -85,11 +110,12 @@ function gab_sync_zone($zone)
     $coords = json_decode($zone['coordinates'], true);
     if (!is_array($coords)) return array('added'=>0, 'removed'=>0);
 
-    // Photos qui doivent être dans l'album (GPS dans la zone)
+    // Photos qui doivent être dans l'album (GPS dans la zone ET période éventuelle)
     $should = array();
     $res = pwg_query('SELECT id,latitude,longitude FROM ' . IMAGES_TABLE
         . ' WHERE latitude IS NOT NULL AND latitude!=0'
-        . ' AND longitude IS NOT NULL AND longitude!=0');
+        . ' AND longitude IS NOT NULL AND longitude!=0'
+        . gab_zone_date_sql($zone));
     while ($r = pwg_db_fetch_assoc($res)) {
         $p = array('lat'=>(float)$r['latitude'], 'lng'=>(float)$r['longitude']);
         if (gab_point_in_zone($p, $zone['zone_type'], $coords))
@@ -107,7 +133,7 @@ function gab_sync_zone($zone)
         if (!isset($current[$id])) { gab_insert_photo($id, $album_id); $added++; }
     }
     foreach ($current as $id => $_) {
-        if (!isset($should[$id])) { gab_remove_photo($id, $album_id); $removed++; }
+        if (!isset($should[$id]) && gab_remove_photo($id, $album_id)) $removed++;
     }
     if ($added > 0 || $removed > 0) gab_refresh($album_id);
     return array('added'=>$added, 'removed'=>$removed);
@@ -151,25 +177,31 @@ function gab_all_zones()
     $z = array(); while ($r = pwg_db_fetch_assoc($res)) $z[] = $r; return $z;
 }
 
-function gab_create_zone($album_id, $name, $type, $coords)
+function gab_create_zone($album_id, $name, $type, $coords, $dates = array())
 {
     $album_id = (int)$album_id;
     if ($album_id <= 0) return 0;
     pwg_query('INSERT INTO ' . GAB_TABLE
-        . ' (album_id,name,zone_type,coordinates) VALUES ('
+        . ' (album_id,name,zone_type,coordinates,date_field,date_from,date_to) VALUES ('
         . $album_id . ',"'
         . pwg_db_real_escape_string($name) . '","'
         . pwg_db_real_escape_string($type) . '","'
-        . pwg_db_real_escape_string(json_encode($coords)) . '")');
+        . pwg_db_real_escape_string(json_encode($coords)) . '","'
+        . pwg_db_real_escape_string(isset($dates['field']) ? $dates['field'] : '') . '","'
+        . pwg_db_real_escape_string(isset($dates['from'])  ? $dates['from']  : '') . '","'
+        . pwg_db_real_escape_string(isset($dates['to'])    ? $dates['to']    : '') . '")');
     return (int)pwg_db_insert_id();
 }
 
-function gab_update_zone($id, $name, $type, $coords)
+function gab_update_zone($id, $name, $type, $coords, $dates = array())
 {
     pwg_query('UPDATE ' . GAB_TABLE . ' SET'
         . ' name="'        . pwg_db_real_escape_string($name) . '",'
         . ' zone_type="'   . pwg_db_real_escape_string($type) . '",'
-        . ' coordinates="' . pwg_db_real_escape_string(json_encode($coords)) . '"'
+        . ' coordinates="' . pwg_db_real_escape_string(json_encode($coords)) . '",'
+        . ' date_field="'  . pwg_db_real_escape_string(isset($dates['field']) ? $dates['field'] : '') . '",'
+        . ' date_from="'   . pwg_db_real_escape_string(isset($dates['from'])  ? $dates['from']  : '') . '",'
+        . ' date_to="'     . pwg_db_real_escape_string(isset($dates['to'])    ? $dates['to']    : '') . '"'
         . ' WHERE id='.(int)$id);
 }
 
@@ -278,3 +310,33 @@ function gab_grant_admin_access($cat_id)
     }
 }
 
+/* Migration : colonnes de période (1.1.0) et suivi des photos ajoutées par le plugin (1.1.2). */
+function gab_migrate()
+{
+    global $conf;
+    if (isset($conf['geoalbum_schema']) && (int)$conf['geoalbum_schema'] >= 3) return;
+
+    $r = pwg_query('SHOW COLUMNS FROM ' . GAB_TABLE . ' LIKE "date_field"');
+    if (!pwg_db_fetch_assoc($r)) {
+        pwg_query('ALTER TABLE ' . GAB_TABLE
+            . ' ADD COLUMN date_field VARCHAR(12) NOT NULL DEFAULT "",'
+            . ' ADD COLUMN date_from VARCHAR(32) NOT NULL DEFAULT "",'
+            . ' ADD COLUMN date_to VARCHAR(32) NOT NULL DEFAULT ""');
+    }
+
+    $new = !pwg_db_fetch_assoc(pwg_query('SHOW TABLES LIKE "' . GAB_MEMBERS_TABLE . '"'));
+    pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_MEMBERS_TABLE . ' (
+        album_id INT UNSIGNED NOT NULL,
+        image_id INT UNSIGNED NOT NULL,
+        PRIMARY KEY (album_id, image_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    if ($new) {
+        // Zones existantes : tout ce que contient déjà leur album est considéré comme géré
+        // par le plugin (comportement des versions précédentes).
+        pwg_query('INSERT IGNORE INTO ' . GAB_MEMBERS_TABLE . ' (album_id, image_id)'
+            . ' SELECT ic.category_id, ic.image_id FROM ' . IMAGE_CATEGORY_TABLE . ' ic'
+            . ' INNER JOIN ' . GAB_TABLE . ' z ON z.album_id = ic.category_id');
+    }
+    conf_update_param('geoalbum_schema', 3);
+    $conf['geoalbum_schema'] = 3;
+}
