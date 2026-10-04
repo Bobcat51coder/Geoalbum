@@ -1,6 +1,6 @@
 <?php
 /*
- * Geo Album v1.0.3 — Page de gestion (admin uniquement)
+ * Geo Album v4.0 — Page de gestion (admin uniquement)
  */
 if (!defined('PHPWG_ROOT_PATH')) define('PHPWG_ROOT_PATH', '../../');
 
@@ -28,9 +28,10 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.3');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.4');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
+if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . 'geo_zone_photos');
 
 include_once(GAB_PATH . 'include/geo_functions.php');
 include_once(GAB_PATH . 'include/db.php');
@@ -45,8 +46,12 @@ pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_TABLE . ' (
     coordinates LONGTEXT NOT NULL,
     active      TINYINT(1) NOT NULL DEFAULT 1,
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    date_field  VARCHAR(12) NOT NULL DEFAULT "",
+    date_from   VARCHAR(32) NOT NULL DEFAULT "",
+    date_to     VARCHAR(32) NOT NULL DEFAULT "",
     INDEX idx_album (album_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+gab_migrate();
 
 /* ── AJAX photos ─────────────────────────────────────────────────────────────
  * Format compact [[id, lat, lng], ...] — sans LIMIT, sans name/file
@@ -69,53 +74,7 @@ if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photos') {
     // sert de repère pour distinguer les deux sans ambiguïté.
     // $end=false -> début de période (1954 => 1954-01-01 00:00:00)
     // $end=true  -> fin de période  (1954 => 1954-12-31 23:59:59)
-    $gab_bound = function($v, $end) {
-        $v = trim((string)$v);
-        if ($v === '') return '';
-        $v = str_replace('.', '-', str_replace('/', '-', $v));
-
-        // Année seule : 1954
-        if (preg_match('/^(\d{4})$/', $v, $m))
-            return $end ? $m[1].'-12-31 23:59:59' : $m[1].'-01-01 00:00:00';
-
-        // ISO année-mois : 1954-06
-        if (preg_match('/^(\d{4})-(\d{1,2})$/', $v, $m)) {
-            $mo = (int)$m[2];
-            if ($mo < 1 || $mo > 12) return '';
-            $mo2 = str_pad($mo, 2, '0', STR_PAD_LEFT);
-            if (!$end) return $m[1].'-'.$mo2.'-01 00:00:00';
-            $last = (int)date('t', mktime(0,0,0,$mo,1,(int)$m[1]));
-            return $m[1].'-'.$mo2.'-'.$last.' 23:59:59';
-        }
-
-        // ISO complet : 1954-06-21
-        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $v, $m)) {
-            $mo = str_pad($m[2], 2, '0', STR_PAD_LEFT);
-            $d  = str_pad($m[3], 2, '0', STR_PAD_LEFT);
-            if (!checkdate((int)$mo, (int)$d, (int)$m[1])) return '';
-            return $m[1].'-'.$mo.'-'.$d.($end ? ' 23:59:59' : ' 00:00:00');
-        }
-
-        // Français mois/année : 06-1954
-        if (preg_match('/^(\d{1,2})-(\d{4})$/', $v, $m)) {
-            $mo = (int)$m[1];
-            if ($mo < 1 || $mo > 12) return '';
-            $mo2 = str_pad($mo, 2, '0', STR_PAD_LEFT);
-            if (!$end) return $m[2].'-'.$mo2.'-01 00:00:00';
-            $last = (int)date('t', mktime(0,0,0,$mo,1,(int)$m[2]));
-            return $m[2].'-'.$mo2.'-'.$last.' 23:59:59';
-        }
-
-        // Français complet jour/mois/année : 21-06-1954
-        if (preg_match('/^(\d{1,2})-(\d{1,2})-(\d{4})$/', $v, $m)) {
-            $mo = str_pad($m[2], 2, '0', STR_PAD_LEFT);
-            $d  = str_pad($m[1], 2, '0', STR_PAD_LEFT);
-            if (!checkdate((int)$mo, (int)$d, (int)$m[3])) return '';
-            return $m[3].'-'.$mo.'-'.$d.($end ? ' 23:59:59' : ' 00:00:00');
-        }
-
-        return '';
-    };
+    $gab_bound = 'gab_date_bound'; // fonction partagée (include/geo_functions.php)
 
     $df = $gab_bound($_GET['df'] ?? '', false);
     $dt = $gab_bound($_GET['dt'] ?? '', true);
@@ -185,6 +144,7 @@ if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photo_detail') {
 
 /* ── Actions POST ─────────────────────────────────────────────────────────── */
 $errors = array(); $infos = array();
+$focus_zone = null; // zone à cadrer sur la carte après enregistrement
 if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
     $action = $_POST['gab_action'];
 
@@ -194,6 +154,24 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
         $name     = trim(stripslashes($_POST['zone_name'] ?? ''));
         $type     = (($_POST['zone_type'] ?? '') === 'polygon') ? 'polygon' : 'bbox';
         $coords   = gab_validate_coords($_POST['coordinates'] ?? '', $type);
+        // Période facultative enregistrée avec la zone (prise de vue ou date d'ajout)
+        $dates = array('field'=>'', 'from'=>'', 'to'=>'');
+        if (!empty($_POST['gab_use_dates'])) {
+            $df_raw = trim(stripslashes($_POST['gab_dfrom'] ?? ''));
+            $dt_raw = trim(stripslashes($_POST['gab_dto']   ?? ''));
+            if ($df_raw !== '' && gab_date_bound($df_raw, false) === '') $errors[] = 'Date de début invalide : '.htmlspecialchars($df_raw);
+            if ($dt_raw !== '' && gab_date_bound($dt_raw, true)  === '') $errors[] = 'Date de fin invalide : '.htmlspecialchars($dt_raw);
+            if (empty($errors) && $df_raw !== '' && $dt_raw !== ''
+                && gab_date_bound($df_raw, false) > gab_date_bound($dt_raw, true))
+                $errors[] = 'La date de début est postérieure à la date de fin.';
+            if (empty($errors) && ($df_raw !== '' || $dt_raw !== '')) {
+                $dates = array(
+                    'field' => (($_POST['gab_dfield'] ?? '') === 'available') ? 'available' : 'creation',
+                    'from'  => mb_substr($df_raw, 0, 32),
+                    'to'    => mb_substr($dt_raw, 0, 32),
+                );
+            }
+        }
         if (!$name)   $errors[] = 'Nom obligatoire.';
         if (!$coords) $errors[] = 'Dessinez une zone sur la carte.';
         if (empty($errors) && $album_id === 0) {
@@ -202,15 +180,23 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
             if ($album_id > 0) $infos[] = 'Album "'.htmlspecialchars($name).'" créé (ID '.$album_id.').';
             else $errors[] = 'Impossible de créer l\'album.';
         }
+        // Un album ne peut être lié qu'à une seule zone (clé unique) : message clair
+        // au lieu d'une erreur SQL quand on choisit un album qui a déjà sa zone.
+        if (empty($errors) && $zone_id === 0 && $album_id > 0) {
+            $dup = gab_get_zone_by_album($album_id);
+            if ($dup) $errors[] = 'Cet album est déjà lié à la zone « '.htmlspecialchars($dup['name'])
+                .' » (ID '.(int)$dup['id'].'). Modifiez cette zone (✏ dans la liste) ou choisissez un autre album.';
+        }
         if (empty($errors)) {
             if ($zone_id > 0) {
-                gab_update_zone($zone_id, $name, $type, $coords);
+                gab_update_zone($zone_id, $name, $type, $coords, $dates);
                 $infos[] = 'Zone mise à jour.';
             } else {
-                $zone_id = gab_create_zone($album_id, $name, $type, $coords);
+                $zone_id = gab_create_zone($album_id, $name, $type, $coords, $dates);
                 $infos[] = 'Zone créée (ID '.$zone_id.').';
             }
             $zone = gab_get_zone($zone_id);
+            $focus_zone = $zone;
             $r    = gab_sync_zone($zone);
             $infos[] = 'Sync : +'.$r['added'].' / -'.$r['removed'].' photo(s).';
         }
@@ -252,6 +238,10 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
 /* ── Données ──────────────────────────────────────────────────────────────── */
 $zones   = gab_all_zones();
 $editing = !empty($_GET['edit']) ? gab_get_zone((int)$_GET['edit']) : null;
+if ($editing) {
+    $cn = pwg_db_fetch_assoc(pwg_query('SELECT name FROM ' . CATEGORIES_TABLE . ' WHERE id=' . (int)$editing['album_id']));
+    $editing['album_name'] = $cn ? $cn['name'] : null;
+}
 $albums  = array();
 // Albums avec photos GPS directes OU dans leurs sous-albums
 // Afficher le nom du parent pour distinguer les albums homonymes
@@ -272,6 +262,25 @@ while ($a = pwg_db_fetch_assoc($res)) {
     }
     $albums[] = $a;
 }
+// Liste des albums pour les selects « Album parent » et « Album existant » : TOUS les albums Piwigo (y compris ceux qui
+// ne contiennent que des sous-albums, sans photo ni GPS), avec leur chemin complet.
+$parent_albums = array();
+$res = pwg_query('SELECT id, name, id_uppercat, global_rank FROM ' . CATEGORIES_TABLE);
+$cat_rows = array();
+while ($c = pwg_db_fetch_assoc($res)) { $cat_rows[(int)$c['id']] = $c; }
+foreach ($cat_rows as $cid => $c) {
+    $path = array(); $cur = $cid; $guard = 0;
+    while ($cur && isset($cat_rows[$cur]) && $guard++ < 50) {
+        array_unshift($path, $cat_rows[$cur]['name']);
+        $cur = (int)$cat_rows[$cur]['id_uppercat'];
+    }
+    $parent_albums[] = array(
+        'id'           => $cid,
+        'display_name' => implode(' / ', $path),
+        'rank'         => (string)$c['global_rank'],
+    );
+}
+usort($parent_albums, function($a, $b) { return strnatcmp($a['rank'], $b['rank']); });
 $nb_gps  = (int)pwg_db_fetch_assoc(pwg_query(
     'SELECT COUNT(*) AS n FROM '.IMAGES_TABLE.' WHERE latitude IS NOT NULL AND latitude!=0'))['n'];
 
@@ -294,7 +303,8 @@ $TILES = array(
     'satellite' => array('label'=>'Satellite', 'url'=>'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}','attr'=>'&copy; Esri'),
     'topo'      => array('label'=>'Topo',      'url'=>'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',                       'attr'=>'&copy; OSM &copy; OpenTopoMap'),
 );
-$tile_key = 'carto';
+$tile_key = gab_default_tile(); // réglage de la page Paramètres (Carto par défaut)
+if (!isset($TILES[$tile_key])) $tile_key = 'carto';
 if (!empty($_GET['tile']) && isset($TILES[$_GET['tile']])) $tile_key = $_GET['tile'];
 
 $root     = get_root_url();
@@ -303,7 +313,11 @@ $ajax_url = $self_url . '?ajax=photos&album_id=';
 $zoom     = isset($conf['osm_map_zoom']) ? (int)$conf['osm_map_zoom'] : 5;
 $edit_id  = $editing ? (int)$editing['id'] : 0;
 $edit_data= $editing
-    ? json_encode(array('coords'=>json_decode($editing['coordinates'],true),'type'=>$editing['zone_type']),JSON_HEX_TAG)
+    ? json_encode(array('coords'=>json_decode($editing['coordinates'],true),'type'=>$editing['zone_type'],
+        'dates'=>array('field'=>$editing['date_field'] ?? '','from'=>$editing['date_from'] ?? '','to'=>$editing['date_to'] ?? '')),JSON_HEX_TAG)
+    : 'null';
+$focus_data = $focus_zone
+    ? json_encode(array('coords'=>json_decode($focus_zone['coordinates'],true),'type'=>$focus_zone['zone_type']),JSON_HEX_TAG)
     : 'null';
 global $pwg_loaded_plugins;
 $osm_url = $root . 'plugins/osm_map/osmmap_plus.php';
@@ -338,6 +352,15 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
 #gi{font-size:11px;color:#777;font-style:italic;flex:1}
 #gab-map{flex:1}
 #ld{position:absolute;top:8px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.65);color:#fff;padding:5px 14px;border-radius:12px;font-size:12px;display:none;z-index:999}
+/* Clusters : couleurs pleines + liseré blanc + chiffre en gras, lisibles sur tous les fonds (Carto, OSM, Satellite, Topo) */
+.marker-cluster-small{background:rgba(27,94,32,.35)}
+.marker-cluster-small div{background:#2e7d32}
+.marker-cluster-medium{background:rgba(191,100,0,.35)}
+.marker-cluster-medium div{background:#e07b00}
+.marker-cluster-large{background:rgba(160,20,20,.35)}
+.marker-cluster-large div{background:#c62828}
+.marker-cluster div{color:#fff;font-weight:700;font-size:13px;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.55);text-shadow:0 1px 2px rgba(0,0,0,.6)}
+.marker-cluster div span{line-height:26px}
 /* Panneau droit */
 #pn{width:300px;min-width:260px;background:#fff;border-left:1px solid #ddd;overflow-y:auto;display:flex;flex-direction:column}
 .sc{padding:10px 12px;border-bottom:1px solid #eee}
@@ -348,7 +371,9 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
 /* Boutons */
 .btn{padding:4px 10px;font-size:12px;border:1px solid #bbb;border-radius:3px;background:#f5f5f5;cursor:pointer;text-decoration:none;color:#333}
 .btn.p{background:#1a73e8;color:#fff;border-color:#1558b0}
-.btn.d{background:#d93025;color:#fff;border-color:#b52d20}
+.btn.d{background:#c5221f;color:#fff;border-color:#8c1613;padding:4px 9px}
+.btn.d:hover{background:#a50e0e}
+.zp{color:#7a4d00;font-size:11px}
 .btn.g{background:#188038;color:#fff;border-color:#0d5c28}
 .btn.a{background:#e37400;color:#fff;border-color:#b35c00}
 /* Liste zones */
@@ -402,7 +427,7 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
       </select>
       <input type="text" id="dt-from" title="Depuis — année (1954), JJ/MM/AAAA (21/06/1954) ou 1954-06-21" placeholder="depuis (1954 ou 21/06/1954)" size="16" style="padding:2px 4px;font-size:12px;border:1px solid #bbb;border-radius:3px;width:150px">
       <input type="text" id="dt-to"   title="Jusqu'à — année (1960), JJ/MM/AAAA (15/08/1960) ou 1960-08-15" placeholder="jusqu'à (1960 ou 15/08/1960)" size="16" style="padding:2px 4px;font-size:12px;border:1px solid #bbb;border-radius:3px;width:150px">
-      <button type="button" onclick="gabApplyDates()" title="Appliquer le filtre de période">Filtrer</button>
+      <button type="button" onclick="gabValidate()" title="Appliquer lieu, période et album">Valider</button>
       <button type="button" onclick="gabResetAll()" title="Tout réinitialiser (album + période)">↺ Réinitialiser</button>
       <a href="<?=htmlspecialchars($root.'admin.php?page=plugin-'.GAB_FOLDER.'#filtres')?>" target="_blank" rel="noopener"
          title="Aide sur les filtres période et album"
@@ -555,23 +580,27 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
         <label>Nom de la zone</label>
         <input type="text" name="zone_name" required
                value="<?=$editing?htmlspecialchars($editing['name']):''?>">
-        <label>Album parent <small>(pour un nouvel album)</small></label>
+        <?php if(!$editing): ?>
+        <label>Album parent <small>(l'album sera créé dedans)</small></label>
         <select name="parent_id">
           <option value="0">— Racine —</option>
-          <?php foreach($albums as $a): ?>
+          <?php foreach($parent_albums as $a): ?>
           <option value="<?=(int)$a['id']?>"><?=htmlspecialchars($a['display_name'])?></option>
           <?php endforeach; ?>
         </select>
-        <label>Album existant <small>(optionnel)</small></label>
-        <select name="album_id">
-          <option value="0">— Créer automatiquement —</option>
-          <?php foreach($albums as $a): ?>
-          <option value="<?=(int)$a['id']?>"
-            <?=($editing&&(int)$editing['album_id']===(int)$a['id'])?'selected':''?>>
-            <?=htmlspecialchars($a['display_name'])?>
-          </option>
-          <?php endforeach; ?>
-        </select>
+        <?php endif; ?>
+        <input type="hidden" name="album_id" value="<?=$editing?(int)$editing['album_id']:0?>">
+        <?php if($editing): ?>
+        <p style="margin:8px 0;font-size:12px;color:#555">Album lié : <strong><?=htmlspecialchars($editing['album_name'] ?? ('#'.(int)$editing['album_id']))?></strong></p>
+        <?php endif; ?>
+        <label style="display:flex;align-items:flex-start;gap:6px;font-weight:normal;cursor:pointer;margin-top:10px">
+          <input type="checkbox" name="gab_use_dates" id="gab-use-dates" value="1" <?=($editing && (($editing['date_from'] ?? '') !== '' || ($editing['date_to'] ?? '') !== ''))?'checked':''?> style="margin-top:3px">
+          <span>Limiter l'album à la période du filtre de la barre de la carte
+            <small id="gab-dates-summary" style="display:block;color:#666"></small></span>
+        </label>
+        <input type="hidden" name="gab_dfield" id="gab-dfield" value="">
+        <input type="hidden" name="gab_dfrom"  id="gab-dfrom"  value="">
+        <input type="hidden" name="gab_dto"    id="gab-dto"    value="">
         <div class="br">
           <button type="submit" class="btn p"><?=$editing?'💾 Enregistrer':'✅ Créer'?></button>
           <?php if($editing): ?>
@@ -622,6 +651,9 @@ if ($z['album_name']) {
         ?>
         &nbsp;·&nbsp; <?=$z['zone_type']==='bbox'?'Rectangle':'Polygone'?>
         &nbsp;·&nbsp; <?=(int)$z['photo_count']?> photo(s)
+        <?php $per = gab_zone_period_label($z); if ($per !== ''): ?>
+        <br><span class="zp" title="Période appliquée à la synchronisation de cet album">📅 <?=htmlspecialchars($per)?></span>
+        <?php endif; ?>
       </div>
       <div class="za">
         <!-- Activer / Désactiver -->
@@ -643,10 +675,10 @@ if ($z['album_name']) {
         </form>
         <!-- Supprimer -->
         <form method="post" action="" style="margin:0"
-              onsubmit="return confirm('Supprimer la zone ?\nL\'album Piwigo sera vidé mais conservé.')">
+              onsubmit="return confirm('Supprimer la zone ?\nLes photos ajoutées par le plugin seront retirées de l\'album, qui sera conservé.')">
           <input type="hidden" name="gab_action" value="delete">
           <input type="hidden" name="zone_id"    value="<?=(int)$z['id']?>">
-          <button type="submit" class="btn d">🗑</button>
+          <button type="submit" class="btn d" title="Supprimer la zone" aria-label="Supprimer la zone"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>
         </form>
       </div>
     </div>
@@ -662,6 +694,7 @@ window.OSM_CARTO_API_KEY = <?=json_encode($gab_carto_key)?>;
 var GAB_ZOOM     = <?=$zoom?>;
 var GAB_CENTER   = [48.0, 10.0];   // Europe centrale
 var GAB_EXISTING = <?=$edit_data?>;
+var GAB_FOCUS    = <?=$focus_data?>;   // zone tout juste créée/modifiée : la carte s'y recadre
 var GAB_AJAX_URL = <?=json_encode($ajax_url)?>;
 var GAB_ZONES    = <?=json_encode(array_map(function($z){return array(
     'id'=>(int)$z['id'],'name'=>$z['name'],
