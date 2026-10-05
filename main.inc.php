@@ -1,10 +1,11 @@
 <?php
 /*
 Plugin Name: Geo Album
-Version: 1.0.4
+Version: 1.0.5
 Description: Gestion simple des albums géographiques (zones GPS) sans SmartAlbums — associations photo/album gérées directement via image_category. Fonctionne de façon autonome ou en complément d'OSM Map Plus (partage sa clé API CartoDB).
+Plugin URI: https://fr.piwigo.org/ext/index.php?eid=1112
 Author: Bobcat-Fr
-Author URI:
+Author URI: https://github.com/Bobcat51coder/Geoalbum
 Has Settings: true
 */
 defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
@@ -12,7 +13,7 @@ defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
 define('GAB_DIR',     dirname(__FILE__));
 define('GAB_PATH',    GAB_DIR . '/');
 define('GAB_FOLDER',  basename(GAB_DIR));
-define('GAB_VERSION', '1.0.4');
+define('GAB_VERSION', '1.0.5');
 
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
@@ -21,39 +22,14 @@ if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . '
 include_once(GAB_PATH . 'include/geo_functions.php');
 include_once(GAB_PATH . 'include/db.php');
 
-/* ── Table ──────────────────────────────────────────────────────────────── */
-add_event_handler('activate_plugin',   'gab_install');
-add_event_handler('deactivate_plugin', 'gab_uninstall');
-
+/* ── Tables ─────────────────────────────────────────────────────────────── */
+// L'installation et la désinstallation sont gérées par Piwigo via maintain.class.php
+// (Piwigo ne déclenche aucun événement "activate_plugin" / "deactivate_plugin").
+// gab_install() reste appelée à chaque chargement comme filet de sécurité (idempotente) :
+// elle couvre aussi une mise à jour faite en remplaçant simplement les fichiers.
 function gab_install()
 {
-    pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_TABLE . ' (
-        id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        album_id    INT UNSIGNED NOT NULL UNIQUE,
-        name        VARCHAR(255) NOT NULL,
-        zone_type   ENUM("bbox","polygon") NOT NULL DEFAULT "bbox",
-        coordinates LONGTEXT NOT NULL,
-        active      TINYINT(1) NOT NULL DEFAULT 1,
-        created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        date_field  VARCHAR(12) NOT NULL DEFAULT "",
-        date_from   VARCHAR(32) NOT NULL DEFAULT "",
-        date_to     VARCHAR(32) NOT NULL DEFAULT "",
-        INDEX idx_album (album_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
-    gab_migrate();
-}
-
-function gab_uninstall()
-{
-    // Retirer les associations créées par ce plugin (celles de l'utilisateur restent)
-    // avant de supprimer les tables
-    $res = pwg_query('SELECT album_id FROM ' . GAB_TABLE);
-    $ids = array();
-    while ($r = pwg_db_fetch_assoc($res)) $ids[] = (int)$r['album_id'];
-    foreach ($ids as $id) gab_clear_album($id);
-    pwg_query('DROP TABLE IF EXISTS ' . GAB_TABLE);
-    pwg_query('DROP TABLE IF EXISTS ' . GAB_MEMBERS_TABLE);
-    conf_update_param('geoalbum_schema', 0);
+    gab_create_tables();
 }
 
 /* ── Init : sync périodique + upload ───────────────────────────────────── */
