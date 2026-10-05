@@ -340,3 +340,24 @@ function gab_migrate()
     conf_update_param('geoalbum_schema', 3);
     $conf['geoalbum_schema'] = 3;
 }
+
+/* Création (idempotente) des deux tables du plugin + migration des anciennes versions.
+ * Utilisée par l'installation Piwigo (maintain.class.php) et par le filet de sécurité
+ * de gab_init() (main.inc.php). */
+function gab_create_tables()
+{
+    pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_TABLE . ' (
+        id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+        album_id    INT UNSIGNED NOT NULL UNIQUE,
+        name        VARCHAR(255) NOT NULL,
+        zone_type   ENUM("bbox","polygon") NOT NULL DEFAULT "bbox",
+        coordinates LONGTEXT NOT NULL,
+        active      TINYINT(1) NOT NULL DEFAULT 1,
+        created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        date_field  VARCHAR(12) NOT NULL DEFAULT "",
+        date_from   VARCHAR(32) NOT NULL DEFAULT "",
+        date_to     VARCHAR(32) NOT NULL DEFAULT "",
+        INDEX idx_album (album_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    gab_migrate();
+}
