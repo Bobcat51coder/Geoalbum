@@ -310,8 +310,19 @@ function gab_grant_admin_access($cat_id)
     }
 }
 
-/* Migration : colonnes de période (1.1.0) et suivi des photos ajoutées par le plugin (1.1.2). */
-function gab_migrate()
+/* La table existe-t-elle ? (le "_" est un joker dans LIKE : on l'échappe) */
+function gab_table_exists($table)
+{
+    $pattern = str_replace(array('\\', '_', '%'), array('\\\\', '\\_', '\\%'), $table);
+    return (bool)pwg_db_fetch_assoc(pwg_query('SHOW TABLES LIKE "' . $pattern . '"'));
+}
+
+/* Migration des anciennes versions (réglage geoalbum_schema = 3 une fois faite) :
+ * colonnes de période (1.0.4) et reprise des photos déjà présentes dans les albums
+ * des zones existantes (suivi des photos ajoutées par le plugin).
+ * $members_existed : la table de suivi existait-elle avant ce chargement ?
+ * Ne sert QU'À migrer : la création des tables ne dépend jamais de ce réglage. */
+function gab_migrate($members_existed = true)
 {
     global $conf;
     if (isset($conf['geoalbum_schema']) && (int)$conf['geoalbum_schema'] >= 3) return;
@@ -323,16 +334,9 @@ function gab_migrate()
             . ' ADD COLUMN date_from VARCHAR(32) NOT NULL DEFAULT "",'
             . ' ADD COLUMN date_to VARCHAR(32) NOT NULL DEFAULT ""');
     }
-
-    $new = !pwg_db_fetch_assoc(pwg_query('SHOW TABLES LIKE "' . GAB_MEMBERS_TABLE . '"'));
-    pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_MEMBERS_TABLE . ' (
-        album_id INT UNSIGNED NOT NULL,
-        image_id INT UNSIGNED NOT NULL,
-        PRIMARY KEY (album_id, image_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
-    if ($new) {
-        // Zones existantes : tout ce que contient déjà leur album est considéré comme géré
-        // par le plugin (comportement des versions précédentes).
+    if (!$members_existed) {
+        // Mise à niveau d'une ancienne version : tout ce que contient déjà l'album d'une zone
+        // est considéré comme géré par le plugin (comportement des versions précédentes).
         pwg_query('INSERT IGNORE INTO ' . GAB_MEMBERS_TABLE . ' (album_id, image_id)'
             . ' SELECT ic.category_id, ic.image_id FROM ' . IMAGE_CATEGORY_TABLE . ' ic'
             . ' INNER JOIN ' . GAB_TABLE . ' z ON z.album_id = ic.category_id');
@@ -341,23 +345,40 @@ function gab_migrate()
     $conf['geoalbum_schema'] = 3;
 }
 
-/* Création (idempotente) des deux tables du plugin + migration des anciennes versions.
- * Utilisée par l'installation Piwigo (maintain.class.php) et par le filet de sécurité
- * de gab_init() (main.inc.php). */
+/* Création (idempotente) des deux tables, puis migration éventuelle.
+ * Vérifie l'existence RÉELLE des tables à chaque appel (une fois par requête) : une table
+ * supprimée à la main, une base restaurée ou un réglage resté en place ne la fait plus
+ * manquer. Appelée par l'installation Piwigo (maintain.class.php), par gab_init()
+ * (main.inc.php) et par la page de gestion (geoalbum.php). */
 function gab_create_tables()
 {
-    pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_TABLE . ' (
-        id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        album_id    INT UNSIGNED NOT NULL UNIQUE,
-        name        VARCHAR(255) NOT NULL,
-        zone_type   ENUM("bbox","polygon") NOT NULL DEFAULT "bbox",
-        coordinates LONGTEXT NOT NULL,
-        active      TINYINT(1) NOT NULL DEFAULT 1,
-        created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        date_field  VARCHAR(12) NOT NULL DEFAULT "",
-        date_from   VARCHAR(32) NOT NULL DEFAULT "",
-        date_to     VARCHAR(32) NOT NULL DEFAULT "",
-        INDEX idx_album (album_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
-    gab_migrate();
+    static $done = false;
+    if ($done) return;
+    $done = true;
+
+    $members_existed = gab_table_exists(GAB_MEMBERS_TABLE);
+
+    if (!gab_table_exists(GAB_TABLE)) {
+        pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_TABLE . ' (
+            id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            album_id    INT UNSIGNED NOT NULL UNIQUE,
+            name        VARCHAR(255) NOT NULL,
+            zone_type   ENUM("bbox","polygon") NOT NULL DEFAULT "bbox",
+            coordinates LONGTEXT NOT NULL,
+            active      TINYINT(1) NOT NULL DEFAULT 1,
+            created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            date_field  VARCHAR(12) NOT NULL DEFAULT "",
+            date_from   VARCHAR(32) NOT NULL DEFAULT "",
+            date_to     VARCHAR(32) NOT NULL DEFAULT "",
+            INDEX idx_album (album_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    }
+    if (!$members_existed) {
+        pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_MEMBERS_TABLE . ' (
+            album_id INT UNSIGNED NOT NULL,
+            image_id INT UNSIGNED NOT NULL,
+            PRIMARY KEY (album_id, image_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+    }
+    gab_migrate($members_existed);
 }
