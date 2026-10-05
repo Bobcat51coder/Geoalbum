@@ -3,7 +3,7 @@
 Plugin Name: Geo Album
 Version: 1.0.5
 Description: Gestion simple des albums géographiques (zones GPS) sans SmartAlbums — associations photo/album gérées directement via image_category. Fonctionne de façon autonome ou en complément d'OSM Map Plus (partage sa clé API CartoDB).
-Plugin URI: https://fr.piwigo.org/ext/index.php?eid=1112
+Plugin URI: https://piwigo.org/ext/extension_view.php?eid=1112
 Author: Bobcat-Fr
 Author URI: https://github.com/Bobcat51coder/Geoalbum
 Has Settings: true
