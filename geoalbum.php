@@ -1,4 +1,4 @@
-<?php
+ <?php
 /*
  * Geo Album v4.0 — Page de gestion (admin uniquement)
  */
@@ -28,7 +28,7 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.4');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.5');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
 if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . 'geo_zone_photos');
