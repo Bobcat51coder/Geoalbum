@@ -1,4 +1,4 @@
- <?php
+<?php
 /*
  * Geo Album v4.0 — Page de gestion (admin uniquement)
  */
@@ -37,21 +37,8 @@ include_once(GAB_PATH . 'include/geo_functions.php');
 include_once(GAB_PATH . 'include/db.php');
 global $conf;
 
-// S'assurer que la table existe (au cas où activate n'a pas encore été appelé)
-pwg_query('CREATE TABLE IF NOT EXISTS ' . GAB_TABLE . ' (
-    id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    album_id    INT UNSIGNED NOT NULL UNIQUE,
-    name        VARCHAR(255) NOT NULL,
-    zone_type   ENUM("bbox","polygon") NOT NULL DEFAULT "bbox",
-    coordinates LONGTEXT NOT NULL,
-    active      TINYINT(1) NOT NULL DEFAULT 1,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    date_field  VARCHAR(12) NOT NULL DEFAULT "",
-    date_from   VARCHAR(32) NOT NULL DEFAULT "",
-    date_to     VARCHAR(32) NOT NULL DEFAULT "",
-    INDEX idx_album (album_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
-gab_migrate();
+// S'assurer que les tables existent et sont à jour (idempotent, vérifie leur présence réelle)
+gab_create_tables();
 
 /* ── AJAX photos ─────────────────────────────────────────────────────────────
  * Format compact [[id, lat, lng], ...] — sans LIMIT, sans name/file
