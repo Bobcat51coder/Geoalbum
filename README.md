@@ -48,3 +48,8 @@ Le filtre de dates de la barre de la carte (prise de vue ou date d'ajout, bornes
 
 Le plugin ne retire d'un album que les photos qu'il y a lui-même ajoutées (suivi dans la table `geo_zone_photos`) : les photos déjà présentes dans un album, rangées à la main ou par un autre outil, ne sont jamais retirées par une synchronisation, une désactivation ou la suppression de la zone. Une photo n'est en outre jamais retirée si elle n'appartient à aucun autre album (pas d'orphelines).
 
+## Installation, désactivation, désinstallation
+
+- **Activation / mise à jour** : les deux tables (`geo_zones`, `geo_zone_photos`) sont créées ou mises à niveau automatiquement.
+- **Désactivation** : rien n'est supprimé ; zones et albums sont conservés.
+- **Désinstallation** (Administration > Plugins > Désinstaller) : les deux tables et les réglages du plugin sont supprimés. Les albums et les photos qu'ils contiennent restent en place.
