@@ -1,5 +1,5 @@
 /**
- * geoalbum.js v4.0
+ * geoalbum.js v4.1 (plugin 1.0.7 : Ctrl+molette zoome la carte, pas la page)
  * Variables : GAB_TILES, GAB_TILE_KEY, GAB_ZOOM, GAB_EXISTING, GAB_AJAX_URL, GAB_ZONES
  */
 var _map=null,_tile=null,_drawn=null,_layerAll=null,_layerSel=null,_drawer=null,_zoneLayer=null;
@@ -467,6 +467,10 @@ function _build(){
         preferCanvas:true});  // Canvas renderer global = performances optimales
     _map.on('mouseover',function(){_map.scrollWheelZoom.enable();});
     _map.on('mouseout', function(){_map.scrollWheelZoom.disable();});
+    // Ctrl + molette : zoome la carte (et non la page du navigateur)
+    _map.getContainer().addEventListener('wheel', function(e){
+        if(e.ctrlKey){ e.preventDefault(); }
+    }, { passive: false });
     _tile=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}).addTo(_map);
 
     _canvas    = L.canvas({padding:0.5});  // renderer partagé pour tous les circleMarkers
