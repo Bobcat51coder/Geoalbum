@@ -201,3 +201,17 @@ function gab_zone_period_label($zone)
     else                            $range = "jusqu'à " . $to;
     return $what . ' : ' . $range;
 }
+
+/* Jeton anti-CSRF de Piwigo (même mécanisme que get_pwg_token() / check_pwg_token()), mais
+ * sans interrompre le script : retourne true si le jeton posté est celui de la session. */
+function gab_token_ok($posted)
+{
+    return function_exists('get_pwg_token')
+        && is_string($posted) && $posted !== ''
+        && hash_equals((string)get_pwg_token(), $posted);
+}
+
+function gab_token_field()
+{
+    return '<input type="hidden" name="pwg_token" value="' . htmlspecialchars(get_pwg_token(), ENT_QUOTES) . '">';
+}
