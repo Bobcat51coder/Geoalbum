@@ -3,6 +3,12 @@
 </div>
 
 <div class="content">
+  {if $GAB_ERRORS}
+  <p style="color:#a94442;background:#f2dede;border:1px solid #ebccd1;padding:8px 12px;border-radius:3px">
+    {foreach from=$GAB_ERRORS item=err}{$err}<br>{/foreach}
+  </p>
+  {/if}
+
   {if $GAB_INFOS}
   <p style="color:#3c763d;background:#dff0d8;border:1px solid #d6e9c6;padding:8px 12px;border-radius:3px">
     {foreach from=$GAB_INFOS item=info}{$info}<br>{/foreach}
@@ -22,6 +28,7 @@
     elle ne sera utilisée que si aucune clé n'est configurée côté OSM Map Plus.
   </p>
   <form method="post" action="">
+    <input type="hidden" name="pwg_token" value="{$GAB_TOKEN}">
     <input type="text" name="geoalbum_carto_api_key" value="{$GAB_OWN_KEY|escape}"
            placeholder="Votre clé CartoDB"
            style="width:320px;max-width:100%;padding:5px 8px;border:1px solid #ccc;border-radius:3px">
@@ -38,6 +45,7 @@
   <h3>Fond de carte par défaut</h3>
   <p>Fond affiché à l'ouverture de la page « Gérer les zones géographiques ». Il reste modifiable à tout moment depuis la barre de la carte.</p>
   <form method="post" action="">
+    <input type="hidden" name="pwg_token" value="{$GAB_TOKEN}">
     {foreach from=$GAB_TILE_CHOICES key=tile_key item=tile_label}
     <label style="margin-right:14px;cursor:pointer">
       <input type="radio" name="geoalbum_default_tile" value="{$tile_key}"{if $tile_key == $GAB_DEFAULT_TILE} checked{/if}> {$tile_label}
