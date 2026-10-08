@@ -28,13 +28,14 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.6');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.7');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
 if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . 'geo_zone_photos');
 
 include_once(GAB_PATH . 'include/geo_functions.php');
 include_once(GAB_PATH . 'include/db.php');
+include_once(GAB_PATH . 'include/backup.php');
 global $conf;
 
 // S'assurer que les tables existent et sont à jour (idempotent, vérifie leur présence réelle)
@@ -132,8 +133,18 @@ if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photo_detail') {
 /* ── Actions POST ─────────────────────────────────────────────────────────── */
 $errors = array(); $infos = array();
 $focus_zone = null; // zone à cadrer sur la carte après enregistrement
+if ($_SERVER['REQUEST_METHOD']==='POST' && empty($_POST) && empty($_FILES) && !empty($_SERVER['CONTENT_LENGTH'])) {
+    // Envoi plus gros que post_max_size : PHP a tout rejeté avant que le plugin ne le voie
+    $errors[] = 'Fichier trop volumineux pour la configuration du serveur (post_max_size).';
+}
 if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
     $action = $_POST['gab_action'];
+
+    // Protection CSRF : toute action qui modifie des données exige le jeton de session Piwigo
+    if (!gab_token_ok($_POST['pwg_token'] ?? '')) {
+        $errors[] = 'Action refusée : jeton de sécurité absent ou expiré. Rechargez la page et recommencez.';
+        $action = '';
+    }
 
     if ($action === 'save') {
         $zone_id  = (int)($_POST['zone_id']  ?? 0);
@@ -212,6 +223,40 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
         $zone = gab_get_zone((int)($_POST['zone_id'] ?? 0));
         if ($zone) { $r = gab_sync_zone($zone); $infos[] = 'Sync : +'.$r['added'].' / -'.$r['removed'].'.'; }
 
+    } elseif ($action === 'export') {
+        // Téléchargement du fichier de sauvegarde (aucun autre affichage)
+        $data = gab_export_data();
+        while (ob_get_level()) ob_end_clean();
+        header('Content-Type: application/json; charset=utf-8');
+        header('Content-Disposition: attachment; filename="geoalbum_zones_' . date('Ymd_His') . '.json"');
+        header('Cache-Control: no-store');
+        echo gab_json($data);
+        exit;
+
+    } elseif ($action === 'backup_now') {
+        $b = gab_write_backup('manual');
+        if ($b === 0)       $infos[]  = 'Aucune zone à sauvegarder.';
+        elseif ($b === false) $errors[] = 'Sauvegarde impossible : le dossier _data de Piwigo n\'est pas accessible en écriture. Utilisez « Exporter » pour télécharger le fichier.';
+        else                $infos[]  = 'Sauvegarde enregistrée sur le serveur (' . $b . ').';
+
+    } elseif ($action === 'import') {
+        $f = isset($_FILES['gab_file']) ? $_FILES['gab_file'] : null;
+        if (!$f || $f['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($f['tmp_name'])) {
+            $errors[] = 'Aucun fichier reçu. Choisissez un fichier .json exporté par Geo Album.';
+        } elseif ($f['size'] > GAB_IMPORT_MAX) {
+            $errors[] = 'Fichier trop volumineux (maximum 10 Mo).';
+        } else {
+            $raw = preg_replace('/^\xEF\xBB\xBF/', '', (string)file_get_contents($f['tmp_name']));
+            $r = gab_import_data(json_decode($raw, true));
+            if ($r === false) $errors[] = 'Ce fichier n\'est pas une sauvegarde Geo Album valide.';
+            else              $infos[]  = 'Import : ' . gab_import_summary($r);
+        }
+
+    } elseif ($action === 'restore') {
+        $r = gab_restore_backup((string)($_POST['backup_file'] ?? ''));
+        if ($r === false) $errors[] = 'Sauvegarde introuvable ou invalide.';
+        else              $infos[]  = 'Restauration : ' . gab_import_summary($r);
+
     } elseif ($action === 'sync_all') {
         $ta = $tr = 0;
         foreach (gab_all_zones() as $z) {
@@ -229,6 +274,8 @@ if ($editing) {
     $cn = pwg_db_fetch_assoc(pwg_query('SELECT name FROM ' . CATEGORIES_TABLE . ' WHERE id=' . (int)$editing['album_id']));
     $editing['album_name'] = $cn ? $cn['name'] : null;
 }
+// Duplication : nouvelle zone (nouvel album) qui reprend la forme d'une zone existante
+$prefill = (!$editing && !empty($_GET['duplicate'])) ? gab_get_zone((int)$_GET['duplicate']) : null;
 $albums  = array();
 // Albums avec photos GPS directes OU dans leurs sous-albums
 // Afficher le nom du parent pour distinguer les albums homonymes
@@ -302,7 +349,10 @@ $edit_id  = $editing ? (int)$editing['id'] : 0;
 $edit_data= $editing
     ? json_encode(array('coords'=>json_decode($editing['coordinates'],true),'type'=>$editing['zone_type'],
         'dates'=>array('field'=>$editing['date_field'] ?? '','from'=>$editing['date_from'] ?? '','to'=>$editing['date_to'] ?? '')),JSON_HEX_TAG)
-    : 'null';
+    : ($prefill
+        ? json_encode(array('coords'=>json_decode($prefill['coordinates'],true),'type'=>$prefill['zone_type'],
+            'dates'=>array('field'=>'','from'=>'','to'=>'')),JSON_HEX_TAG)
+        : 'null');
 $focus_data = $focus_zone
     ? json_encode(array('coords'=>json_decode($focus_zone['coordinates'],true),'type'=>$focus_zone['zone_type']),JSON_HEX_TAG)
     : 'null';
@@ -556,17 +606,22 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
 
     <!-- Formulaire -->
     <div class="sc">
-      <h3><?=$editing?'✏️ Modifier':'➕ Nouvelle zone'?></h3>
+      <h3><?=$editing?'✏️ Modifier':($prefill?'⧉ Dupliquer la zone':'➕ Nouvelle zone')?></h3>
+      <?php if($prefill): ?>
+      <p style="margin:0 0 8px;font-size:12px;color:#555">Même forme que « <?=htmlspecialchars($prefill['name'])?> ». Un <strong>nouvel album</strong> sera créé :
+        choisissez un nom, un album parent et, si besoin, une période (champs de dates de la barre au-dessus de la carte, puis « Valider »). La zone d'origine n'est pas modifiée.</p>
+      <?php endif; ?>
       <form method="post" action="" id="gab-form">
+          <?=gab_token_field()?>
         <input type="hidden" name="gab_action"  value="save">
         <input type="hidden" name="zone_id"     value="<?=$edit_id?>">
         <input type="hidden" name="coordinates" id="gab-coords"
-               value="<?=$editing?htmlspecialchars($editing['coordinates']):''?>">
+               value="<?=$editing?htmlspecialchars($editing['coordinates']):($prefill?htmlspecialchars($prefill['coordinates']):'')?>">
         <input type="hidden" name="zone_type"   id="gab-type"
-               value="<?=$editing?htmlspecialchars($editing['zone_type']):'bbox'?>">
+               value="<?=$editing?htmlspecialchars($editing['zone_type']):($prefill?htmlspecialchars($prefill['zone_type']):'bbox')?>">
         <label>Nom de la zone</label>
         <input type="text" name="zone_name" required
-               value="<?=$editing?htmlspecialchars($editing['name']):''?>">
+               value="<?=$editing?htmlspecialchars($editing['name']):($prefill?htmlspecialchars($prefill['name'].' (copie)'):'')?>">
         <?php if(!$editing): ?>
         <label>Album parent <small>(l'album sera créé dedans)</small></label>
         <select name="parent_id">
@@ -591,6 +646,9 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
         <div class="br">
           <button type="submit" class="btn p"><?=$editing?'💾 Enregistrer':'✅ Créer'?></button>
           <?php if($editing): ?>
+          <a href="<?=htmlspecialchars($self_url.'?duplicate='.$edit_id)?>" class="btn" title="Créer un nouvel album avec la même forme">⧉ Dupliquer</a>
+          <a href="<?=htmlspecialchars($self_url)?>" class="btn">Annuler</a>
+          <?php elseif($prefill): ?>
           <a href="<?=htmlspecialchars($self_url)?>" class="btn">Annuler</a>
           <?php endif; ?>
         </div>
@@ -602,6 +660,7 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
       <div style="display:flex;justify-content:space-between;align-items:center">
         <h3 style="margin:0">Zones géo (<?=count($zones)?>)</h3>
         <form method="post" action="" style="margin:0">
+          <?=gab_token_field()?>
           <input type="hidden" name="gab_action" value="sync_all">
           <button type="submit" class="btn a">↺ Tout sync</button>
         </form>
@@ -614,6 +673,49 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
       </div>
       <?php endif; ?>
     </div>
+
+    <!-- Sauvegarde / restauration des zones -->
+    <?php $gab_backups = gab_list_backups(); ?>
+    <details class="sc" id="gab-backup" <?=(empty($zones) && $gab_backups)?'open':''?>>
+      <summary style="cursor:pointer;font-weight:600;font-size:13px">💾 Sauvegarde des zones</summary>
+      <?php if (empty($zones) && $gab_backups): ?>
+      <div class="ok" style="margin-top:8px">Aucune zone n'est définie, mais des sauvegardes existent : vous pouvez les restaurer ci-dessous.</div>
+      <?php endif; ?>
+      <p style="font-size:12px;color:#555;margin:8px 0 6px">
+        Enregistre la définition des zones (forme, album, période). Les albums et les photos ne sont pas concernés.
+        Une sauvegarde est aussi faite automatiquement avant une désinstallation du plugin.
+      </p>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <form method="post" action="" style="margin:0">
+          <?=gab_token_field()?>
+          <input type="hidden" name="gab_action" value="export">
+          <button type="submit" class="btn a" <?=empty($zones)?'disabled':''?>>⬇ Exporter (.json)</button>
+        </form>
+        <form method="post" action="" style="margin:0">
+          <?=gab_token_field()?>
+          <input type="hidden" name="gab_action" value="backup_now">
+          <button type="submit" class="btn" <?=empty($zones)?'disabled':''?>>Sauvegarder sur le serveur</button>
+        </form>
+      </div>
+      <form method="post" action="" enctype="multipart/form-data" style="margin:8px 0 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <?=gab_token_field()?>
+        <input type="hidden" name="gab_action" value="import">
+        <input type="file" name="gab_file" accept=".json,application/json" required style="font-size:12px;max-width:100%">
+        <button type="submit" class="btn">⬆ Importer</button>
+      </form>
+      <?php if ($gab_backups): ?>
+      <div style="margin-top:10px;font-size:12px"><strong>Sauvegardes sur le serveur</strong></div>
+      <?php foreach ($gab_backups as $b): ?>
+      <form method="post" action="" style="margin:4px 0 0;display:flex;gap:6px;align-items:center;justify-content:space-between"
+            onsubmit="return confirm('Restaurer cette sauvegarde ?\nLes zones dont l\'album existe encore et n\'est pas déjà lié à une zone seront recréées. Aucune zone existante n\'est modifiée.')">
+        <?=gab_token_field()?>
+        <input type="hidden" name="gab_action"  value="restore">
+        <input type="hidden" name="backup_file" value="<?=htmlspecialchars($b['file'])?>">
+        <span style="font-size:12px"><?=date('d/m/Y H:i', $b['time'])?> · <?=(int)$b['zones']?> zone(s)<?=$b['reason']==='uninstall'?' · avant désinstallation':''?></span>
+        <button type="submit" class="btn">↺ Restaurer</button>
+      </form>
+      <?php endforeach; endif; ?>
+    </details>
 
     <?php if(empty($zones)): ?>
     <div style="padding:12px;color:#777;font-size:12px;font-style:italic">
@@ -645,6 +747,7 @@ if ($z['album_name']) {
       <div class="za">
         <!-- Activer / Désactiver -->
         <form method="post" action="" style="margin:0">
+          <?=gab_token_field()?>
           <input type="hidden" name="gab_action" value="toggle">
           <input type="hidden" name="zone_id"    value="<?=(int)$z['id']?>">
           <input type="hidden" name="active_val" value="<?=$z['active']?0:1?>">
@@ -653,9 +756,11 @@ if ($z['album_name']) {
           </button>
         </form>
         <!-- Éditer -->
-        <a href="<?=htmlspecialchars($self_url.'?edit='.(int)$z['id'])?>" class="btn">✏</a>
+        <a href="<?=htmlspecialchars($self_url.'?edit='.(int)$z['id'])?>" class="btn" title="Modifier">✏</a>
+        <a href="<?=htmlspecialchars($self_url.'?duplicate='.(int)$z['id'])?>" class="btn" title="Dupliquer : nouvel album avec la même forme">⧉</a>
         <!-- Sync -->
         <form method="post" action="" style="margin:0">
+          <?=gab_token_field()?>
           <input type="hidden" name="gab_action" value="sync_one">
           <input type="hidden" name="zone_id"    value="<?=(int)$z['id']?>">
           <button type="submit" class="btn">↺ Sync</button>
@@ -663,6 +768,7 @@ if ($z['album_name']) {
         <!-- Supprimer -->
         <form method="post" action="" style="margin:0"
               onsubmit="return confirm('Supprimer la zone ?\nLes photos ajoutées par le plugin seront retirées de l\'album, qui sera conservé.')">
+          <?=gab_token_field()?>
           <input type="hidden" name="gab_action" value="delete">
           <input type="hidden" name="zone_id"    value="<?=(int)$z['id']?>">
           <button type="submit" class="btn d" title="Supprimer la zone" aria-label="Supprimer la zone"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>

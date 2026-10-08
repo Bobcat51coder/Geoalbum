@@ -28,13 +28,20 @@ function gab_clean_key($key)
 $gab_manage_url   = get_root_url() . 'plugins/' . GAB_FOLDER . '/geoalbum.php';
 
 $gab_infos = array();
+$gab_errors = array();
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['geoalbum_carto_api_key'])) {
+// Protection CSRF des deux formulaires de cette page
+$gab_post_ok = ($_SERVER['REQUEST_METHOD'] !== 'POST') || gab_token_ok($_POST['pwg_token'] ?? '');
+if (!$gab_post_ok) {
+    $gab_errors[] = 'Action refusée : jeton de sécurité absent ou expiré. Rechargez la page et recommencez.';
+}
+
+if ($gab_post_ok && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['geoalbum_carto_api_key'])) {
     conf_update_param('geoalbum_carto_api_key', gab_clean_key($_POST['geoalbum_carto_api_key']));
     $gab_infos[] = 'Clé API enregistrée.';
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['geoalbum_default_tile'])) {
+if ($gab_post_ok && $_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['geoalbum_default_tile'])) {
     $choices = gab_tile_choices();
     $wanted  = (string)$_POST['geoalbum_default_tile'];
     if (isset($choices[$wanted])) {
@@ -63,6 +70,8 @@ $template->assign(array(
     'GAB_OWN_KEY'          => $gab_own_key,
     'GAB_EFFECTIVE_SOURCE' => $gab_effective_source,
     'GAB_INFOS'            => $gab_infos,
+    'GAB_ERRORS'           => $gab_errors,
+    'GAB_TOKEN'            => get_pwg_token(),
     'GAB_TILE_CHOICES'     => gab_tile_choices(),
     'GAB_DEFAULT_TILE'     => gab_default_tile(),
     'GAB_HELP_IMG_URL'     => get_root_url() . 'plugins/' . GAB_FOLDER . '/template/images/screenshot1.jpg',
