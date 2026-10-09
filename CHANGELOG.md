@@ -1,5 +1,15 @@
 # Changelog — Geo Album
 
+## 1.0.8 (français)
+- **Nouveau fond de carte : OpenFreeMap** (vectoriel, MapLibre GL), gratuit et sans clé API. Disponible dans la barre de la carte et comme fond par défaut dans les réglages. MapLibre n'est chargé que si ce fond est choisi ; sans WebGL ou sans réseau, la carte bascule sur OSM.
+- Dossier de langue corrigé : `language/en_US` (au lieu de `language/language/en_US`), conformément aux recommandations Piwigo.
+- README et CHANGELOG mis à jour (section « Services externes utilisés »).
+
+## 1.0.8 (English)
+- **New base map: OpenFreeMap** (vector, MapLibre GL), free and without API key. Available in the map toolbar and as the default base map in the settings. MapLibre is only loaded when this base map is selected; without WebGL or network access the map falls back to OSM.
+- Language folder fixed: `language/en_US` (instead of `language/language/en_US`), as recommended by Piwigo.
+- README and CHANGELOG updated ("External services used" section).
+
 ## 1.0.7 (français)
 - **Sauvegarde et restauration des zones** : panneau « 💾 Sauvegarde des zones » (export `.json`, sauvegarde sur le serveur dans `_data/geoalbum_backups/`, import, restauration). Aucune zone existante n'est écrasée à la restauration.
 - **Sauvegarde automatique avant désinstallation** ; si elle est impossible, rien n'est supprimé. La page de gestion propose la restauration après une réinstallation.
