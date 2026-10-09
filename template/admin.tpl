@@ -53,7 +53,7 @@
     {/foreach}
     <button type="submit" class="btn a">Enregistrer</button>
   </form>
-
+  <p style="font-size:12px;color:#666">OpenFreeMap : fond vectoriel gratuit, sans clé API (nécessite WebGL ; si le navigateur ne le permet pas, la carte bascule sur OSM).</p>
 
   <p>
     <a class="button" href="{$GAB_MANAGE_URL}">→ Gérer les zones géographiques (version {$GAB_VERSION})</a>
