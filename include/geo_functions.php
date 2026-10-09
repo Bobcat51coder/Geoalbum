@@ -111,6 +111,7 @@ function gab_tile_choices()
         'osm'       => 'OSM',
         'satellite' => 'Satellite',
         'topo'      => 'Topo',
+        'openfreemap' => 'OpenFreeMap',
     );
 }
 
