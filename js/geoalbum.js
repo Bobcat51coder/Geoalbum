@@ -1,5 +1,5 @@
 /**
- * geoalbum.js v4.1 (plugin 1.0.7 : Ctrl+molette zoome la carte, pas la page)
+ * geoalbum.js v4.2 (plugin 1.0.8 : fond OpenFreeMap / MapLibre GL ; Ctrl+molette zoome la carte)
  * Variables : GAB_TILES, GAB_TILE_KEY, GAB_ZOOM, GAB_EXISTING, GAB_AJAX_URL, GAB_ZONES
  */
 var _map=null,_tile=null,_drawn=null,_layerAll=null,_layerSel=null,_drawer=null,_zoneLayer=null;
@@ -170,11 +170,76 @@ function gabZoom(pct){
     setTimeout(function(){ _map.invalidateSize(); }, 150);
 }
 
+// Chargement à la demande de MapLibre GL (uniquement si le fond OpenFreeMap est choisi)
+var _MAPLIBRE_VER  = '5.24.0';
+var _MAPLIBRE_LEAF = '0.1.4';
+var _mlState = 0;      // 0 = non chargé, 1 = en cours, 2 = prêt, -1 = échec
+var _mlWaiting = [];
+function _gabWebGL(){
+    try{
+        var c=document.createElement('canvas');
+        return !!(window.WebGLRenderingContext && (c.getContext('webgl2')||c.getContext('webgl')));
+    }catch(e){ return false; }
+}
+function _gabLoadMapLibre(cb){
+    if(_mlState===2){ cb(true); return; }
+    if(_mlState===-1){ cb(false); return; }
+    _mlWaiting.push(cb);
+    if(_mlState===1) return;
+    _mlState = 1;
+    function done(ok){
+        _mlState = ok ? 2 : -1;
+        var w=_mlWaiting; _mlWaiting=[];
+        w.forEach(function(f){ f(ok); });
+    }
+    if(!_gabWebGL()){ done(false); return; }
+    var css=document.createElement('link');
+    css.rel='stylesheet';
+    css.href='https://unpkg.com/maplibre-gl@'+_MAPLIBRE_VER+'/dist/maplibre-gl.css';
+    document.head.appendChild(css);
+    function load(src, next){
+        var s=document.createElement('script');
+        s.src=src; s.async=false;
+        s.onload=next;
+        s.onerror=function(){ done(false); };
+        document.head.appendChild(s);
+    }
+    load('https://unpkg.com/maplibre-gl@'+_MAPLIBRE_VER+'/dist/maplibre-gl.js', function(){
+        load('https://unpkg.com/@maplibre/maplibre-gl-leaflet@'+_MAPLIBRE_LEAF+'/dist/leaflet-maplibre-gl.js', function(){
+            done(typeof L.maplibreGL === 'function');
+        });
+    });
+}
+
+var _tileSeq = 0;   // numéro du dernier choix de fond (ignore les chargements périmés)
 function gabTile(k){
     if(!_map) return;
     var t=(GAB_TILES||{})[k]; if(!t) return;
-    if(_tile) _map.removeLayer(_tile);
-    _tile=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}).addTo(_map);
+    var seq=++_tileSeq;
+    function swap(layer){
+        if(seq!==_tileSeq) return;           // un choix plus récent a pris le relais
+        if(_tile) _map.removeLayer(_tile);
+        _tile=layer.addTo(_map);
+        if(_tile.bringToBack) _tile.bringToBack();
+    }
+    if(t.style){
+        _gabLoadMapLibre(function(ok){
+            if(seq!==_tileSeq) return;
+            if(ok){
+                try{
+                    swap(L.maplibreGL({style:t.style, attributionControl:{customAttribution:t.attr}}));
+                    return;
+                }catch(e){ console.error('GeoAlbum: OpenFreeMap', e); }
+            }
+            // WebGL ou réseau indisponible : repli sur OSM
+            var r=document.querySelector('input[name="tr"][value="osm"]');
+            if(r) r.checked=true;
+            _info('OpenFreeMap indisponible (WebGL ou réseau) : fond OSM utilisé');
+            gabTile('osm');
+        });
+        return;
+    }
+    swap(L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}));
 }
 
 function _gabMakeSelMarker(p, clustered){
@@ -471,7 +536,8 @@ function _build(){
     _map.getContainer().addEventListener('wheel', function(e){
         if(e.ctrlKey){ e.preventDefault(); }
     }, { passive: false });
-    _tile=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}).addTo(_map);
+    if(t.style){ gabTile(k); }   // fond vectoriel (OpenFreeMap) : chargé à la demande
+    else _tile=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}).addTo(_map);
 
     _canvas    = L.canvas({padding:0.5});  // renderer partagé pour tous les circleMarkers
     _zoneLayer = L.featureGroup().addTo(_map);
