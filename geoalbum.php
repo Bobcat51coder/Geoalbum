@@ -28,7 +28,7 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.7');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.8');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
 if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . 'geo_zone_photos');
@@ -335,6 +335,9 @@ $TILES = array(
     'carto'     => array('label'=>'Carto',     'url'=>$gab_carto_url,   'attr'=>'&copy; OSM &copy; CARTO'),
     'osm'       => array('label'=>'OSM',       'url'=>'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',                     'attr'=>'&copy; OpenStreetMap'),
     'satellite' => array('label'=>'Satellite', 'url'=>'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}','attr'=>'&copy; Esri'),
+    'openfreemap' => array('label'=>'OpenFreeMap', 'url'=>'', 'vector'=>true,
+                           'style'=>'https://tiles.openfreemap.org/styles/liberty',
+                           'attr'=>'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'),
     'topo'      => array('label'=>'Topo',      'url'=>'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',                       'attr'=>'&copy; OSM &copy; OpenTopoMap'),
 );
 $tile_key = gab_default_tile(); // réglage de la page Paramètres (Carto par défaut)
