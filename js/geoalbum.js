@@ -1,8 +1,8 @@
 /**
- * geoalbum.js v4.2 (plugin 1.0.8 : fond OpenFreeMap / MapLibre GL ; Ctrl+molette zoome la carte)
+ * geoalbum.js v4.2 (plugin 1.1.0 : fond OpenFreeMap / MapLibre GL ; Ctrl+molette zoome la carte)
  * Variables : GAB_TILES, GAB_TILE_KEY, GAB_ZOOM, GAB_EXISTING, GAB_AJAX_URL, GAB_ZONES
  */
-var _map=null,_tile=null,_drawn=null,_layerAll=null,_layerSel=null,_drawer=null,_zoneLayer=null;
+var _map=null,_tile=null,_drawn=null,_layerAll=null,_layerSel=null,_drawer=null,_zoneLayer=null,_zonePins=null;
 var _canvas=null;  // renderer Canvas = bien plus rapide que SVG pour 10k+ markers
 var _allPhotos=null;   // cache des photos "toutes" chargées, pour reconstruire la vue à la demande
 var _layerFlat=null;   // couche "points individuels" (sans regroupement), construite au 1er besoin
@@ -29,9 +29,18 @@ var _cameraIcon = L.divIcon({
     iconSize: [20,20], iconAnchor: [10,10]
 });
 
+var _stash = null;   // ancienne forme (modification d'une zone) mise de côté pendant le tracé d'une nouvelle
+function _gabUnstash(){
+    if(_stash && _drawn){ _stash.forEach(function(l){ _drawn.addLayer(l); }); }
+    _stash = null;
+}
 function gabDraw(t){
     if(!_map) return;
     if(_drawer){try{_drawer.disable();}catch(e){}_drawer=null;}
+    _gabUnstash();
+    // Une forme déjà tracée (modification) est retirée de la carte dès qu'on choisit un outil :
+    // elle ne gêne plus le tracé, et elle est remise en place si on abandonne sans tracer.
+    if(_drawn && _drawn.getLayers().length){ _stash=_drawn.getLayers().slice(); _drawn.clearLayers(); }
     var bb=document.getElementById('btn-bbox');
     var bp=document.getElementById('btn-polygon');
     if(bb) bb.className='btn'+(t==='bbox'?' act':'');
@@ -44,6 +53,7 @@ function gabDraw(t){
 
 function gabClear(){
     if(_drawer){try{_drawer.disable();}catch(e){}_drawer=null;}
+    _stash=null;
     if(_drawn) _drawn.clearLayers();
     _f('gab-coords',''); _f('gab-type','bbox');
     var bb=document.getElementById('btn-bbox');
@@ -53,9 +63,65 @@ function gabClear(){
     _info('Aucune zone dessinée');
 }
 
+// Zone en cours de modification (page ?edit=) : le cadrage automatique revient sur elle,
+// pas sur l'ensemble des photos.
+function _gabEditBounds(){
+    if(typeof GAB_EXISTING==='undefined' || !GAB_EXISTING || !_drawn) return null;
+    var ls=_drawn.getLayers(); if(!ls.length && _stash) ls=_stash;
+    if(!ls.length) return null;
+    try{ var b=L.featureGroup(ls).getBounds(); return b.isValid()?b:null; }catch(e){ return null; }
+}
 function gabFit(){
     if(!_map||!_layerAll) return;
+    var eb=_gabEditBounds();
+    if(eb){ try{ _map.fitBounds(eb.pad(0.05)); }catch(e){} return; }
     try{ _map.fitBounds(_layerAll.getBounds().pad(0.1)); }catch(e){}
+}
+
+// Cadre la carte sur l'ensemble des zones actives (vue d'ensemble)
+// Les repères de zones ne sont affichés qu'à petite échelle (zoom <= 10) : au-delà, le contour suffit
+function _gabPinsVisibility(){
+    if(!_map||!_zonePins) return;
+    var show=_map.getZoom()<=10;
+    if(show && !_map.hasLayer(_zonePins)) _zonePins.addTo(_map);
+    if(!show && _map.hasLayer(_zonePins)) _map.removeLayer(_zonePins);
+}
+function _gabToast(txt){
+    try{
+        var c=_map.getContainer(), t=document.getElementById('gab-toast');
+        if(!t){ t=document.createElement('div'); t.id='gab-toast';
+            t.style.cssText='position:absolute;z-index:1200;left:50%;bottom:24px;transform:translateX(-50%);background:#202124;color:#fff;padding:7px 14px;border-radius:16px;font-size:13px;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.35)';
+            c.appendChild(t); }
+        t.textContent=txt; t.style.display='';
+        clearTimeout(t._h); t._h=setTimeout(function(){ t.style.display='none'; },3000);
+    }catch(e){}
+}
+function gabFitZones(){
+    if(!_map) return;
+    // Calculé directement depuis les coordonnées des zones (indépendant des couches dessinées)
+    var pts=[], n=0;
+    (GAB_ZONES||[]).forEach(function(z){
+        if(!z||!z.active||!z.coordinates||!z.coordinates.length) return;
+        var ok=false;
+        z.coordinates.forEach(function(p){
+            var la=parseFloat(p.lat), ln=parseFloat(p.lng);
+            if(isFinite(la)&&isFinite(ln)){ pts.push([la,ln]); ok=true; }
+        });
+        if(ok) n++;
+    });
+    if(!pts.length){ _info('Aucune zone active à afficher.'); return; }
+    try{
+        _map.invalidateSize();
+        _map.fitBounds(L.latLngBounds(pts).pad(0.08),{animate:false,maxZoom:18});
+        _info(n+' zone(s) active(s) affichée(s)');
+        _gabToast('🗺 '+n+' zone(s) active(s) affichée(s)');
+        // Clignotement des contours : l'action est visible même si la vue ne change pas
+        if(_zoneLayer){
+            var bold={color:'#e8710a',weight:5,fillOpacity:0.2,dashArray:null};
+            try{ _zoneLayer.setStyle(bold); _zoneLayer.bringToFront(); }catch(e3){}
+            setTimeout(function(){ try{ _zoneLayer.setStyle(SZ); }catch(e4){} },1500);
+        }
+    }catch(e){ _info('Cadrage impossible : '+e.message); try{ console.error('GeoAlbum gabFitZones',e); }catch(e2){} }
 }
 
 var _CONTINENTS = {
@@ -211,6 +277,75 @@ function _gabLoadMapLibre(cb){
     });
 }
 
+// Noms de lieux d'OpenFreeMap : français (name:fr) puis nom latin puis nom local ; pour les pays à
+// alphabet non latin, le nom local est ajouté sur une seconde ligne (ex. « Grèce / Ελλάδα »).
+function _gabFrenchLabels(gl){
+    try{
+        var fr=['coalesce',['get','name:fr'],['get','name:latin'],['get','name']];
+        var expr=['case',
+            ['all',['has','name:nonlatin'],['!=',['get','name:nonlatin'],'']],
+            ['concat',fr,'\n',['get','name:nonlatin']],
+            fr];
+        gl.getStyle().layers.forEach(function(l){
+            if(l.type!=='symbol') return;
+            var tf=l.layout && l.layout['text-field'];
+            if(!tf || JSON.stringify(tf).indexOf('name')<0) return;
+            try{ gl.setLayoutProperty(l.id,'text-field',expr); }catch(e){}
+        });
+    }catch(e){ console.error('GeoAlbum: libellés', e); }
+}
+
+/* ===== Vue 3D (lecture seule) =====
+ * Ouvre la page geoalbum.php?view3d=1 dans un NOUVEL ONGLET : carte MapLibre inclinée (OpenFreeMap,
+ * bâtiments en relief) centrée sur la vue courante, avec les photos de l'album choisi (ou toutes).
+ * Aucun tracé, aucune zone, aucune écriture. */
+function gab3D(){
+    if(!_map) return;
+    var c=_map.getCenter(), sel=document.getElementById('flt');
+    var base=GAB_AJAX_URL.split('?')[0];
+    var url=base+'?view3d=1&lat='+c.lat.toFixed(6)+'&lng='+c.lng.toFixed(6)+'&z='+_map.getZoom()
+           +'&album='+(sel?parseInt(sel.value,10)||0:0);
+    // Filtre période du panneau : la 3D affiche les mêmes photos que la 2D
+    var _f=(document.getElementById('dt-from')||{}).value||'', _t=(document.getElementById('dt-to')||{}).value||'',
+        _fl=(document.getElementById('sel-datefield')||{}).value||'creation';
+    if(_f||_t){ url+='&dfield='+encodeURIComponent(_fl); if(_f) url+='&df='+encodeURIComponent(_f); if(_t) url+='&dt='+encodeURIComponent(_t); }
+    // Emprise à cadrer en 3D : la zone en cours de modification, sinon la vue actuelle
+    var eb=_gabEditBounds(), b=eb||_map.getBounds();
+    url+='&bb='+[b.getSouth(),b.getWest(),b.getNorth(),b.getEast()].map(function(v){return v.toFixed(6);}).join(',');
+    if(eb){
+        var ls=_drawn.getLayers(); if(!ls.length && _stash) ls=_stash;
+        try{
+            var pts=ls[0].getLatLngs(); while(pts.length && Array.isArray(pts[0])) pts=pts[0];
+            var step=Math.max(1,Math.ceil(pts.length/150));
+            var ring=[]; for(var i=0;i<pts.length;i+=step) ring.push(pts[i].lng.toFixed(5)+','+pts[i].lat.toFixed(5));
+            if(ring.length>2) url+='&ring='+ring.join(';');
+        }catch(e){}
+    }
+    window.open(url,'_blank');
+}
+
+/* Popup d'une photo (imagette + titre + lien vers la page de la photo), chargée au clic. */
+function _gabPhotoPopup(marker){
+    var box=document.createElement('div');
+    box.style.cssText='text-align:center;min-width:120px';
+    box.textContent='Chargement…';
+    marker.bindPopup(box,{maxWidth:230}).openPopup();
+    _ajax(GAB_AJAX_URL.replace('?ajax=photos&album_id=','?ajax=photo_detail&id=')+marker._gab_id,function(d){
+        box.textContent='';
+        if(!d||!d.name){ box.textContent='Photo introuvable'; return; }
+        var a=document.createElement('a'); a.href=d.page_url; a.target='_blank'; a.rel='noopener';
+        if(d.thumb){
+            var im=document.createElement('img'); im.src=d.thumb; im.alt=d.name;
+            im.style.cssText='display:block;max-width:200px;max-height:200px;margin:0 auto 4px;border-radius:3px';
+            im.onload=function(){ try{ marker.getPopup().update(); }catch(e){} };
+            a.appendChild(im);
+        }
+        var t=document.createElement('span'); t.textContent=d.name; a.appendChild(t);
+        box.appendChild(a);
+        try{ marker.getPopup().update(); }catch(e){}
+    });
+}
+
 var _tileSeq = 0;   // numéro du dernier choix de fond (ignore les chargements périmés)
 function gabTile(k){
     if(!_map) return;
@@ -223,23 +358,46 @@ function gabTile(k){
         if(_tile.bringToBack) _tile.bringToBack();
     }
     if(t.style){
-        _gabLoadMapLibre(function(ok){
+        function fallback(why){
             if(seq!==_tileSeq) return;
-            if(ok){
-                try{
-                    swap(L.maplibreGL({style:t.style, attributionControl:{customAttribution:t.attr}}));
-                    return;
-                }catch(e){ console.error('GeoAlbum: OpenFreeMap', e); }
-            }
-            // WebGL ou réseau indisponible : repli sur OSM
             var r=document.querySelector('input[name="tr"][value="osm"]');
             if(r) r.checked=true;
-            _info('OpenFreeMap indisponible (WebGL ou réseau) : fond OSM utilisé');
+            _info('OpenFreeMap indisponible ('+why+') : fond OSM utilisé');
             gabTile('osm');
+        }
+        _gabLoadMapLibre(function(ok){
+            if(seq!==_tileSeq) return;
+            if(!ok){ fallback(_gabWebGL() ? 'chargement de MapLibre GL impossible' : 'WebGL non disponible'); return; }
+            var layer, gl, loaded=false, timer=null;
+            try{
+                layer=L.maplibreGL({style:t.style, attributionControl:{customAttribution:t.attr}});
+                swap(layer);
+                gl=layer.getMaplibreMap();
+            }catch(e){ console.error('GeoAlbum: OpenFreeMap', e); fallback('erreur MapLibre'); return; }
+            if(!gl) return;
+            // « chargé » = le style est lu (les tuiles et polices arrivent ensuite, une erreur isolée
+            // sur l'une d'elles ne doit jamais faire abandonner OpenFreeMap).
+            function styleOk(){ try{ return !!(gl.getStyle() && gl.getStyle().layers && gl.getStyle().layers.length); }catch(e){ return false; } }
+            var relabeled=false;
+            gl.on('styledata', function(){
+                if(styleOk()){ loaded=true; if(timer) clearTimeout(timer); if(!relabeled){ relabeled=true; _gabFrenchLabels(gl); } }
+            });
+            gl.on('error', function(ev){
+                console.error('GeoAlbum: MapLibre', ev && ev.error);
+                if(!loaded && !styleOk() && seq===_tileSeq && !(ev && ev.sourceId)){
+                    if(timer) clearTimeout(timer);
+                    fallback('style non chargé : '+((ev&&ev.error&&ev.error.message)||'erreur'));
+                }
+            });
+            // Garde-fou : style toujours illisible au bout de 20 s -> OSM
+            timer=setTimeout(function(){ if(!loaded && !styleOk()) fallback('délai dépassé'); }, 20000);
         });
         return;
     }
-    swap(L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}));
+    var base=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19});
+    if(t.overlay){   // fond + couche de noms (ex. satellite + toponymes)
+        swap(L.layerGroup([base, L.tileLayer(t.overlay,{maxZoom:19,pane:'gabLabels'})]));
+    } else swap(base);
 }
 
 function _gabMakeSelMarker(p, clustered){
@@ -255,6 +413,7 @@ function _gabMakeSelMarker(p, clustered){
         m = L.circleMarker([p[1],p[2]], Object.assign({},SS,{renderer:_canvas}));
     }
     m._gab_id = p[0];
+    m.on('click', function(){ _gabPhotoPopup(this); });
     m.on('mouseover', function(){
         if(this._gab_name) return;
         var self = this;
@@ -287,7 +446,9 @@ function _gabRenderSel(fit){
     }
     if(fit){
         var b = _clusterOn ? _layerSel : _layerSelFlat;
-        try{ _map.fitBounds(b.getBounds().pad(0.1)); }catch(e){}
+        var eb=_gabEditBounds();
+        if(eb){ try{ _map.fitBounds(eb.pad(0.05)); }catch(e){} }
+        else try{ _map.fitBounds(b.getBounds().pad(0.1)); }catch(e){}
     }
 }
 
@@ -457,6 +618,12 @@ function gabResetDates(){
 
 // Réinitialise tout : "Tous les albums" + période vidée
 function gabResetAll(){
+    // En modification / duplication / arrivée depuis la 3D : retour à la page de création
+    // (formulaire vierge), pas seulement remise à zéro des filtres.
+    var zi=document.querySelector('#gab-form input[name=zone_id]');
+    var editing = (typeof GAB_EXISTING!=='undefined' && GAB_EXISTING) || (zi && parseInt(zi.value,10)>0)
+        || /[?&](edit|duplicate|glat)=/.test(location.search);
+    if(editing){ location.href = GAB_AJAX_URL.split('?')[0]; return; }
     var sel=document.getElementById('flt');
     if(sel) sel.value='0';
     var f=document.getElementById('dt-from'), t=document.getElementById('dt-to');
@@ -475,7 +642,7 @@ function _gabMakeMarker(p, clustered){
         : L.circleMarker([p[1],p[2]],Object.assign({},SA,{renderer:_canvas}));
     m._gab_id=p[0];
     m.on('mouseover click',function(e){
-        if(e.type==='click'&&this._gab_url){window.open(this._gab_url,'_blank');return;}
+        if(e.type==='click'){ _gabPhotoPopup(this); return; }
         if(e.type==='mouseover'&&!this._gab_name){
             var self=this;
             _ajax(GAB_AJAX_URL.replace('?ajax=photos&album_id=','?ajax=photo_detail&id=')+this._gab_id,function(d){
@@ -528,21 +695,38 @@ function _build(){
     var t=tiles[k]||{url:_fallbackUrl,attr:'CARTO'};
 
     var _initCenter = (typeof GAB_CENTER!=='undefined') ? GAB_CENTER : [48.0,10.0];
-    _map=L.map('gab-map',{center:_initCenter,zoom:GAB_ZOOM||4,scrollWheelZoom:false,
+    // minZoom/maxZoom explicites : sans eux, Leaflet exige qu'un fond de carte raster soit déjà posé
+    // (ce n'est pas le cas avec un fond vectoriel chargé à la demande) et lève une exception.
+    _map=L.map('gab-map',{center:_initCenter,zoom:GAB_ZOOM||4,minZoom:2,maxZoom:19,scrollWheelZoom:false,
         preferCanvas:true});  // Canvas renderer global = performances optimales
-    _map.on('mouseover',function(){_map.scrollWheelZoom.enable();});
-    _map.on('mouseout', function(){_map.scrollWheelZoom.disable();});
+    var lp=_map.createPane('gabLabels'); lp.style.zIndex=250; lp.style.pointerEvents='none';  // couche de noms
+    // Molette active uniquement quand la souris est sur la carte. On écoute directement le DOM
+    // (capture) : les événements « mouseover » de Leaflet ne remontent pas toujours quand le
+    // curseur est au-dessus d'un fond vectoriel (canvas WebGL) et la molette ne marchait alors
+    // que sur les zones dessinées.
+    (function(){
+        var cont=_map.getContainer();
+        function wOn(){ if(!_map.scrollWheelZoom.enabled()) _map.scrollWheelZoom.enable(); }
+        ['mouseenter','mouseover','mousemove','pointermove'].forEach(function(ev){
+            cont.addEventListener(ev, wOn, true);
+        });
+        cont.addEventListener('mouseleave', function(){ _map.scrollWheelZoom.disable(); });
+    })();
     // Ctrl + molette : zoome la carte (et non la page du navigateur)
     _map.getContainer().addEventListener('wheel', function(e){
         if(e.ctrlKey){ e.preventDefault(); }
     }, { passive: false });
-    if(t.style){ gabTile(k); }   // fond vectoriel (OpenFreeMap) : chargé à la demande
+    if(t.style||t.overlay){ gabTile(k); }   // fond vectoriel (OpenFreeMap) : chargé à la demande
     else _tile=L.tileLayer(t.url,{attribution:t.attr,maxZoom:19}).addTo(_map);
 
     _canvas    = L.canvas({padding:0.5});  // renderer partagé pour tous les circleMarkers
     _zoneLayer = L.featureGroup().addTo(_map);
+    _zonePins  = L.featureGroup();
     _drawn     = L.featureGroup().addTo(_map);
 
+    // Couches de photos et zones : une erreur ici ne doit jamais empêcher de lier les boutons et
+    // la recherche de lieu, d'où le try/catch.
+    try{
     // Utiliser MarkerCluster si disponible (chargé par osm_map), sinon featureGroup simple
     if (typeof L.markerClusterGroup === 'function') {
         _layerAll = L.markerClusterGroup({
@@ -577,9 +761,17 @@ function _build(){
             if(layer){
                 layer.bindTooltip('\u{1F4CD} '+z.name,{permanent:false,direction:'center'});
                 _zoneLayer.addLayer(layer);
+                // Repère orange au centre de la zone : visible à petite échelle, où le contour est trop petit
+                var pin=L.marker(layer.getBounds().getCenter(),{zIndexOffset:2000,icon:L.divIcon({className:'',iconSize:[22,22],
+                    html:'<div style="width:18px;height:18px;margin:2px;border-radius:50%;background:#e8710a;border:3px solid #fff;box-shadow:0 0 4px rgba(0,0,0,.6)"></div>'})});
+                pin.bindTooltip('\u{1F4CD} '+z.name,{direction:'top'});
+                pin.on('click',function(){ try{ _map.fitBounds(layer.getBounds().pad(0.15)); }catch(e){} });
+                _zonePins.addLayer(pin);
             }
         }catch(e){}
     });
+    _map.on('zoomend',_gabPinsVisibility);
+    _gabPinsVisibility();
 
     var _ed = (GAB_EXISTING && GAB_EXISTING.dates) ? GAB_EXISTING.dates : null;
     if(_ed && (_ed.from || _ed.to)){
@@ -607,7 +799,7 @@ function _build(){
             });
             idx+=CHUNK;
             if(idx<photos.length){requestAnimationFrame(addChunk);return;}
-            if(!GAB_EXISTING && !GAB_FOCUS) gabFit();
+            if(!GAB_EXISTING && !GAB_FOCUS && !(typeof GAB_GOTO!=='undefined' && GAB_GOTO)) gabFit();
         }
         requestAnimationFrame(addChunk);
     });
@@ -615,6 +807,9 @@ function _build(){
 
     if(GAB_EXISTING) _restoreZone(GAB_EXISTING.coords, GAB_EXISTING.type);
     else if(typeof GAB_FOCUS!=='undefined' && GAB_FOCUS) _gabFocusZone(GAB_FOCUS.coords, GAB_FOCUS.type);
+    }catch(err){ console.error('GeoAlbum: initialisation des couches', err); _loading(false); }
+    // Arrivée depuis la vue 3D (« Dessiner ici ») : l'outil de tracé choisi est activé
+    if(typeof GAB_GOTO_DRAW!=='undefined' && GAB_GOTO_DRAW){ setTimeout(function(){ try{ gabDraw(GAB_GOTO_DRAW); }catch(e){} },300); }
 
     // Lier les sélecteurs via JS (plus fiable que onchange inline)
     var selContinent = document.getElementById('sel-continent');
@@ -673,7 +868,9 @@ function _build(){
     var selAlbum = document.getElementById('flt');
     if(selAlbum) selAlbum.addEventListener('change', function(){ gabFilter(this.value); });
 
+    _map.on(L.Draw.Event.DRAWSTOP, function(){ _gabUnstash(); });
     _map.on(L.Draw.Event.CREATED, function(e){
+        _stash = null;   // la nouvelle forme remplace l'ancienne
         _drawn.clearLayers();
         _drawn.addLayer(e.layer);
         var coords, type;
@@ -722,7 +919,7 @@ function _restoreZone(coords, type){
         layer=L.polygon(coords.map(function(c){return[c.lat,c.lng];}),SD);
     _drawn.addLayer(layer);
     try{ _map.fitBounds(_drawn.getBounds().pad(0.05)); }catch(e){}
-    _info(_desc(coords));
+    _info(_desc(coords)+' — Modification : choisissez ⬜ Rectangle ou ⬡ Polygone pour retracer la zone');
 }
 
 function _ajax(url,cb){
