@@ -28,7 +28,7 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.0.8');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.1.0');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
 if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . 'geo_zone_photos');
@@ -114,19 +114,109 @@ if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photos') {
     exit;
 }
 
-/* ── AJAX détail photo (au clic sur un marqueur) ─────────────────────────── */
-if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photo_detail') {
-    // headers déjà envoyés dans le bloc auth ci-dessus
-    $id = (int)($_GET['id'] ?? 0);
-    if ($id <= 0) { echo '{}'; exit; }
-    $r = pwg_db_fetch_assoc(pwg_query(
-        'SELECT id, name, file, path FROM ' . IMAGES_TABLE . ' WHERE id=' . $id));
-    if (!$r) { echo '{}'; exit; }
+/* ── Détail d'une photo (titre, page, imagette) ─────────────────────────── */
+function gab_photo_info($r)
+{
     $root_url = get_root_url();
     $title    = $r['name'] ?: pathinfo($r['file'], PATHINFO_FILENAME);
-    // Construire l'URL absolue directement sans make_picture_url (qui génère des chemins relatifs)
+    // URL absolue directement, sans make_picture_url (qui génère des chemins relatifs)
     $page_url = $root_url . 'picture.php?/' . (int)$r['id'];
-    echo json_encode(array('id'=>(int)$r['id'],'name'=>$title,'page_url'=>$page_url));
+    // Imagette (dérivé « thumb » de Piwigo) ; vide si indisponible : le plugin reste utilisable sans
+    $thumb = '';
+    try {
+        if (!class_exists('DerivativeImage') && is_file(PHPWG_ROOT_PATH . 'include/derivative.inc.php'))
+            include_once(PHPWG_ROOT_PATH . 'include/derivative.inc.php');
+        if (class_exists('DerivativeImage')) {
+            $thumb = (string)DerivativeImage::thumb_url($r);
+            if ($thumb !== '' && !preg_match('#^(https?:)?//#', $thumb) && $thumb[0] !== '/')
+                $thumb = $root_url . preg_replace('#^\./#', '', $thumb);
+        }
+    } catch (Throwable $e) { $thumb = ''; }
+    return array('id'=>(int)$r['id'],'name'=>$title,'page_url'=>$page_url,'thumb'=>$thumb);
+}
+
+/* ── AJAX détail photo (au clic sur un marqueur) ─────────────────────────── */
+if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photo_detail') {
+    $id = (int)($_GET['id'] ?? 0);
+    if ($id <= 0) { echo '{}'; exit; }
+    $r = pwg_db_fetch_assoc(pwg_query('SELECT * FROM ' . IMAGES_TABLE . ' WHERE id=' . $id));
+    if (!$r) { echo '{}'; exit; }
+    echo json_encode(gab_photo_info($r));
+    exit;
+}
+
+/* ── AJAX détails de plusieurs photos (galerie des points superposés ; 60 au plus) ───────── */
+if (!empty($_GET['ajax']) && $_GET['ajax'] === 'photo_details') {
+    $ids = array();
+    foreach (explode(',', (string)($_GET['ids'] ?? '')) as $x) { $x = (int)$x; if ($x > 0) $ids[$x] = $x; }
+    $ids = array_slice(array_values($ids), 0, 60);
+    $out = array();
+    if ($ids) {
+        $res = pwg_query('SELECT * FROM ' . IMAGES_TABLE . ' WHERE id IN (' . implode(',', $ids) . ')');
+        $by = array();
+        while ($r = pwg_db_fetch_assoc($res)) $by[(int)$r['id']] = gab_photo_info($r);
+        foreach ($ids as $i) if (isset($by[$i])) $out[] = $by[$i];
+    }
+    echo json_encode($out);
+    exit;
+}
+
+/* ── Vue 3D : page autonome, ouverte dans un nouvel onglet (lecture seule) ─────────────────── */
+if (!empty($_GET['view3d'])) {
+    $v_lat = max(-85, min(85, (float)($_GET['lat'] ?? 46.5)));
+    $v_lng = max(-180, min(180, (float)($_GET['lng'] ?? 2.5)));
+    $v_zoom = max(2, min(20, (float)($_GET['z'] ?? 14)));
+    $v_album = max(0, (int)($_GET['album'] ?? 0));
+    // Emprise à cadrer (s,w,n,e) et contour éventuel de la zone (anneau lng,lat;lng,lat…)
+    $v_bb = null;
+    if (!empty($_GET['bb']) && preg_match('/^-?[\d.]+(,-?[\d.]+){3}$/', $_GET['bb'])) $v_bb = array_map('floatval', explode(',', $_GET['bb']));
+    $v_ring = array();
+    if (!empty($_GET['ring']) && preg_match('/^[-\d.,;]+$/', $_GET['ring'])) {
+        foreach (array_slice(explode(';', $_GET['ring']), 0, 500) as $pt) {
+            $xy = explode(',', $pt);
+            if (count($xy) == 2) $v_ring[] = array((float)$xy[0], (float)$xy[1]);
+        }
+    }
+    $v_q = '';
+    foreach (array('dfield','df','dt') as $k) if (isset($_GET[$k]) && strlen($_GET[$k]) <= 20) $v_q .= '&' . $k . '=' . rawurlencode($_GET[$k]);
+    $v_root = get_root_url();
+    $v_self = $v_root . 'plugins/' . basename(dirname(__FILE__)) . '/geoalbum.php';
+    $v_ver = defined('GAB_VERSION') ? GAB_VERSION : '';
+    $v_js = dirname(__FILE__) . '/js/geoalbum3d.js';
+    $v_v = $v_ver . '.' . (int)@filemtime($v_js);
+    while (ob_get_level()) ob_end_clean();
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-cache');
+    ?><!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Geo Album — Vue 3D</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
+<style>
+html,body{margin:0;height:100%;font:13px sans-serif}
+body{display:flex;flex-direction:column}
+#bar{padding:6px 10px;background:#222;color:#fff;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+#bar b{font-size:14px} #bar span{opacity:.8} #bar label{cursor:pointer}
+#map{flex:1}
+.pp img{display:block;max-width:200px;max-height:200px;border-radius:3px;margin-bottom:4px}
+.pp a{color:#06c;text-decoration:none}
+</style></head><body>
+<div id="bar"><b>Vue 3D</b>
+<span>Clic droit + glisser (ou Ctrl + glisser) : incliner et pivoter. Pour tracer une zone, utilisez « Dessiner ici ».</span>
+<label><input type="checkbox" id="chk-photos" checked> Photos</label>
+<span>✏ Dessiner ici :</span>
+<button type="button" id="btn-draw-bbox" style="cursor:pointer" title="Retourner sur la carte de dessin, à cet endroit, et tracer un rectangle">⬜ Rectangle</button>
+<button type="button" id="btn-draw-polygon" style="cursor:pointer" title="Retourner sur la carte de dessin, à cet endroit, et tracer un polygone">⬡ Polygone</button>
+<button type="button" id="btn-tilt" style="cursor:pointer">Mettre à plat (2D)</button>
+<span id="info"></span></div>
+<div id="map"></div>
+<script>
+var GAB3D = <?=json_encode(array('lat'=>$v_lat,'lng'=>$v_lng,'zoom'=>$v_zoom,'album'=>$v_album,'ajax'=>$v_self,'bb'=>$v_bb,'ring'=>$v_ring,'q'=>$v_q), JSON_HEX_TAG|JSON_HEX_AMP)?>;
+</script>
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
+<script src="<?=htmlspecialchars($v_root)?>plugins/<?=htmlspecialchars(basename(dirname(__FILE__)))?>/js/geoalbum3d.js?v=<?=htmlspecialchars($v_v)?>"></script>
+</body></html>
+<?php
     exit;
 }
 
@@ -189,6 +279,11 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
             if ($zone_id > 0) {
                 gab_update_zone($zone_id, $name, $type, $coords, $dates);
                 $infos[] = 'Zone mise à jour.';
+                // Renommage de l'album lié (nom de l'album pris dans la base, jamais dans le formulaire)
+                $new_album = trim(stripslashes($_POST['album_name'] ?? ''));
+                $zrow = gab_get_zone($zone_id);
+                if ($new_album !== '' && $zrow && gab_rename_album((int)$zrow['album_id'], $new_album))
+                    $infos[] = 'Album renommé : « ' . htmlspecialchars($new_album) . ' ».';
             } else {
                 $zone_id = gab_create_zone($album_id, $name, $type, $coords, $dates);
                 $infos[] = 'Zone créée (ID '.$zone_id.').';
@@ -258,17 +353,21 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && !empty($_POST['gab_action'])) {
         else              $infos[]  = 'Restauration : ' . gab_import_summary($r);
 
     } elseif ($action === 'sync_all') {
-        $ta = $tr = 0;
+        $ta = $tr = 0; $done_ids = array();
         foreach (gab_all_zones() as $z) {
             if (!$z['active']) continue;
-            $r = gab_sync_zone($z); $ta += $r['added']; $tr += $r['removed'];
+            $r = gab_sync_zone($z, false); $ta += $r['added']; $tr += $r['removed'];
+            $done_ids[] = (int)$z['id'];
         }
+        if ($done_ids) gab_sync_times_save($done_ids);
         $infos[] = 'Tout resynchronisé : +'.$ta.' / -'.$tr.'.';
     }
 }
 
 /* ── Données ──────────────────────────────────────────────────────────────── */
 $zones   = gab_all_zones();
+$gab_sync_times = gab_sync_times();
+$gab_missing = 0; foreach ($zones as $z_) if (empty($z_['cat_id'])) $gab_missing++;
 $editing = !empty($_GET['edit']) ? gab_get_zone((int)$_GET['edit']) : null;
 if ($editing) {
     $cn = pwg_db_fetch_assoc(pwg_query('SELECT name FROM ' . CATEGORIES_TABLE . ' WHERE id=' . (int)$editing['album_id']));
@@ -338,6 +437,10 @@ $TILES = array(
     'openfreemap' => array('label'=>'OpenFreeMap', 'url'=>'', 'vector'=>true,
                            'style'=>'https://tiles.openfreemap.org/styles/liberty',
                            'attr'=>'<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> Data from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'),
+    'satellite_noms' => array('label'=>'Satellite + noms', 'url'=>'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                           'overlay'=>'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+                           'attr'=>'&copy; Esri'),
+    'osmfr'     => array('label'=>'OSM France', 'url'=>'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', 'attr'=>'&copy; OpenStreetMap France &copy; OpenStreetMap'),
     'topo'      => array('label'=>'Topo',      'url'=>'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',                       'attr'=>'&copy; OSM &copy; OpenTopoMap'),
 );
 $tile_key = gab_default_tile(); // réglage de la page Paramètres (Carto par défaut)
@@ -403,6 +506,10 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
 .marker-cluster div span{line-height:26px}
 /* Panneau droit */
 #pn{width:300px;min-width:260px;background:#fff;border-left:1px solid #ddd;overflow-y:auto;display:flex;flex-direction:column}
+.gab-tabs{display:flex;border-bottom:1px solid #ddd;background:#f3f3f3}
+.gab-tabs button{flex:1;padding:7px 6px;border:0;border-bottom:3px solid transparent;background:none;cursor:pointer;font-size:12px;color:#555}
+.gab-tabs button.on{border-bottom-color:#1a73e8;color:#111;font-weight:600;background:#fff}
+.warn{color:#c5221f;font-weight:600}
 .sc{padding:10px 12px;border-bottom:1px solid #eee}
 .sc h3{font-size:13px;font-weight:600;margin-bottom:7px}
 .sc label{display:block;font-size:12px;color:#555;margin-bottom:2px;margin-top:4px}
@@ -452,6 +559,7 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
       <button type="button" id="btn-polygon" onclick="gabDraw('polygon')">⬡ Polygone</button>
       <button type="button"                  onclick="gabClear()"          class="del">✕ Effacer</button>
       <button type="button"                  onclick="gabFit()">⊕ Centrer</button>
+      <button type="button" onclick="gabFitZones()" title="Cadrer la carte pour voir toutes les zones actives">🗺 Toutes les zones</button>
       <span class="osm-geocoder-wrapper">
         <input type="text" id="gab-geocoder" placeholder="🔎 Rechercher un lieu…" autocomplete="off">
         <div id="gab-geocoder-results" class="osm-geocoder-dropdown"></div>
@@ -594,6 +702,8 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
       <label style="cursor:pointer"><input type="radio" name="tr" value="<?=$k?>"
              <?=$k===$tile_key?'checked':''?> onchange="gabTile('<?=$k?>')"> <?=$t['label']?></label>
       <?php endforeach; ?>
+      <span class="sep">|</span>
+      <button type="button" onclick="gab3D()" title="Vue 3D des bâtiments (observation seule, sans tracé de zone)" style="cursor:pointer">🏙 3D</button>
       <span id="gi"></span>
     </div>
     <div style="position:relative;flex:1;display:flex;flex-direction:column">
@@ -609,7 +719,7 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
 
     <!-- Formulaire -->
     <div class="sc">
-      <h3><?=$editing?'✏️ Modifier':($prefill?'⧉ Dupliquer la zone':'➕ Nouvelle zone')?></h3>
+      <h3><?=$editing?'✏️ Modification':($prefill?'⧉ Dupliquer la zone':'➕ Nouvelle zone')?></h3>
       <?php if($prefill): ?>
       <p style="margin:0 0 8px;font-size:12px;color:#555">Même forme que « <?=htmlspecialchars($prefill['name'])?> ». Un <strong>nouvel album</strong> sera créé :
         choisissez un nom, un album parent et, si besoin, une période (champs de dates de la barre au-dessus de la carte, puis « Valider »). La zone d'origine n'est pas modifiée.</p>
@@ -636,7 +746,14 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
         <?php endif; ?>
         <input type="hidden" name="album_id" value="<?=$editing?(int)$editing['album_id']:0?>">
         <?php if($editing): ?>
-        <p style="margin:8px 0;font-size:12px;color:#555">Album lié : <strong><?=htmlspecialchars($editing['album_name'] ?? ('#'.(int)$editing['album_id']))?></strong></p>
+        <?php if($editing['album_name'] !== null && $editing['album_name'] !== ''): ?>
+        <label>Nom de l'album lié <small>(modifiable ; la zone n'est pas renommée pour autant)</small></label>
+        <input type="text" name="album_name" maxlength="255" value="<?=htmlspecialchars($editing['album_name'])?>">
+        <?php else: ?>
+        <p style="margin:8px 0;font-size:12px" class="warn">⚠ L'album lié (n° <?=(int)$editing['album_id']?>) n'existe plus dans Piwigo.</p>
+        <?php endif; ?>
+        <p style="margin:8px 0;font-size:12px;color:#555">Pour modifier la forme : choisissez <strong>⬜ Rectangle</strong> ou <strong>⬡ Polygone</strong>
+          au-dessus de la carte et retracez la zone (l'ancienne forme est remplacée), puis « Valider la modification ».</p>
         <?php endif; ?>
         <label style="display:flex;align-items:flex-start;gap:6px;font-weight:normal;cursor:pointer;margin-top:10px">
           <input type="checkbox" name="gab_use_dates" id="gab-use-dates" value="1" <?=($editing && (($editing['date_from'] ?? '') !== '' || ($editing['date_to'] ?? '') !== ''))?'checked':''?> style="margin-top:3px">
@@ -647,7 +764,7 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
         <input type="hidden" name="gab_dfrom"  id="gab-dfrom"  value="">
         <input type="hidden" name="gab_dto"    id="gab-dto"    value="">
         <div class="br">
-          <button type="submit" class="btn p"><?=$editing?'💾 Enregistrer':'✅ Créer'?></button>
+          <button type="submit" class="btn p"><?=$editing?'✅ Valider la modification':'✅ Créer'?></button>
           <?php if($editing): ?>
           <a href="<?=htmlspecialchars($self_url.'?duplicate='.$edit_id)?>" class="btn" title="Créer un nouvel album avec la même forme">⧉ Dupliquer</a>
           <a href="<?=htmlspecialchars($self_url)?>" class="btn">Annuler</a>
@@ -657,6 +774,17 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
         </div>
       </form>
     </div>
+
+    <!-- Onglets du panneau de droite -->
+    <div class="gab-tabs">
+      <button type="button" id="gab-tb-zones" class="on" onclick="gabTab('zones')">Zones (<?=count($zones)?>)</button>
+      <button type="button" id="gab-tb-albums" onclick="gabTab('albums')">Albums liés (<?=count($zones)?>)<?=$gab_missing?' <span class="warn" title="Album introuvable">⚠</span>':''?></button>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 10px;background:#fafafa;border-bottom:1px solid #eee;font-size:11px;color:#888">
+      <span>Geo Album <?=htmlspecialchars(GAB_VERSION)?></span>
+      <button type="button" id="gab-sort" style="cursor:pointer;font-size:12px;padding:3px 10px" title="Changer l'ordre des listes (zones et albums liés)">↕ Tri : récent</button>
+    </div>
+    <div id="gab-tab-zones">
 
     <!-- Liste zones -->
     <div class="sc">
@@ -727,7 +855,7 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
     <?php else: ?>
     <div id="zone-list">
     <?php foreach($zones as $z): ?>
-    <div class="zr" data-search="<?=htmlspecialchars(mb_strtolower($z['name'].' '.($z['album_name']?:'')))?>">
+    <div class="zr" data-gname="<?=htmlspecialchars(mb_strtolower($z['name']))?>" data-search="<?=htmlspecialchars(mb_strtolower($z['name'].' '.($z['album_name']?:'')))?>">
       <div class="zn"><?=htmlspecialchars($z['name'])?></div>
       <div class="zm">
         📁 <?php
@@ -743,6 +871,7 @@ if ($z['album_name']) {
         ?>
         &nbsp;·&nbsp; <?=$z['zone_type']==='bbox'?'Rectangle':'Polygone'?>
         &nbsp;·&nbsp; <?=(int)$z['photo_count']?> photo(s)
+        <?php if (empty($z['cat_id'])): ?><br><span class="warn">⚠ Album introuvable : il a été supprimé dans Piwigo</span><?php endif; ?>
         <?php $per = gab_zone_period_label($z); if ($per !== ''): ?>
         <br><span class="zp" title="Période appliquée à la synchronisation de cet album">📅 <?=htmlspecialchars($per)?></span>
         <?php endif; ?>
@@ -770,7 +899,12 @@ if ($z['album_name']) {
         </form>
         <!-- Supprimer -->
         <form method="post" action="" style="margin:0"
-              onsubmit="return confirm('Supprimer la zone ?\nLes photos ajoutées par le plugin seront retirées de l\'album, qui sera conservé.')">
+              onsubmit="return confirm(<?=htmlspecialchars(json_encode(
+                  !empty($z['cat_id'])
+                  ? ('Supprimer la zone « ' . $z['name'] . ' » ?' . "\n" . 'Album concerné : « ' . $z['album_name'] . ' » (il sera conservé).' . "\n"
+                     . (int)$z['tracked_count'] . ' photo(s) ajoutée(s) par le plugin seront retirées de cet album ; les autres photos restent.')
+                  : ('Supprimer la zone « ' . $z['name'] . ' » ? (son album n\'existe plus dans Piwigo)'),
+                  JSON_UNESCAPED_UNICODE), ENT_QUOTES)?>)">
           <?=gab_token_field()?>
           <input type="hidden" name="gab_action" value="delete">
           <input type="hidden" name="zone_id"    value="<?=(int)$z['id']?>">
@@ -778,8 +912,61 @@ if ($z['album_name']) {
         </form>
       </div>
     </div>
-    <?php endforeach; endif; ?>
+    <?php endforeach; ?>
     </div>
+    <?php endif; ?>
+    </div><!-- /gab-tab-zones -->
+
+    <!-- Onglet « Albums liés » -->
+    <div id="gab-tab-albums" style="display:none">
+      <div class="sc">
+        <h3 style="margin:0 0 4px">Albums alimentés par Geo Album</h3>
+        <div style="font-size:11px;color:#666">
+          La liaison album ↔ zone est enregistrée par le plugin : renommer l'album dans Piwigo ne la casse pas.
+        </div>
+      </div>
+      <?php if (empty($zones)): ?>
+      <div style="padding:12px;color:#777;font-size:12px;font-style:italic">Aucun album lié.</div>
+      <?php endif; ?>
+      <?php foreach ($zones as $z):
+          $aid = (int)$z['album_id'];
+          $exists = !empty($z['cat_id']);
+          $per = gab_zone_period_label($z);
+          $ts  = isset($gab_sync_times[(int)$z['id']]) ? (int)$gab_sync_times[(int)$z['id']] : 0;
+      ?>
+      <div class="zr" data-gname="<?=htmlspecialchars(mb_strtolower($z['name']))?>">
+        <div class="zn">
+          <?php if ($exists): ?>
+          <a href="<?=htmlspecialchars($root . 'index.php?/category/' . $aid)?>" target="_blank" title="Voir l'album"><?=htmlspecialchars($z['album_name'])?></a>
+          <a href="<?=htmlspecialchars($root . 'admin.php?page=album-' . $aid)?>" target="_blank" title="Éditer l'album" style="color:#1a73e8;font-size:10px">[admin]</a>
+          <?php else: ?>
+          <span class="warn">⚠ Album introuvable (n° <?=$aid?>)</span>
+          <?php endif; ?>
+        </div>
+        <div class="zm">
+          Zone : <b><?=htmlspecialchars($z['name'])?></b>
+          &nbsp;·&nbsp; <?=$z['active']?'✓ active':'✗ inactive'?><br>
+          📷 <?=(int)$z['photo_count']?> photo(s), dont <?=(int)$z['tracked_count']?> ajoutée(s) par le plugin<br>
+          📅 2<sup>e</sup> critère : <?=$per !== '' ? htmlspecialchars($per) : 'aucun (zone géographique seule)'?><br>
+          🕒 Dernière synchro : <?=$ts ? date('d/m/Y H:i', $ts) : '—'?>
+          <?php if (!$exists): ?>
+          <br><span class="warn">L'album a été supprimé dans Piwigo : supprimez cette zone, ou recréez-en une avec un nouvel album.</span>
+          <?php endif; ?>
+        </div>
+        <div class="za">
+          <a href="<?=htmlspecialchars($self_url.'?edit='.(int)$z['id'])?>" class="btn" title="Modifier la zone">✏</a>
+          <?php if ($exists): ?>
+          <form method="post" action="" style="margin:0">
+            <?=gab_token_field()?>
+            <input type="hidden" name="gab_action" value="sync_one">
+            <input type="hidden" name="zone_id"    value="<?=(int)$z['id']?>">
+            <button type="submit" class="btn">↺ Sync</button>
+          </form>
+          <?php endif; ?>
+        </div>
+      </div>
+      <?php endforeach; ?>
+    </div><!-- /gab-tab-albums -->
   </div>
 </div>
 
@@ -787,8 +974,21 @@ if ($z['album_name']) {
 var GAB_TILES    = <?=json_encode($TILES,JSON_HEX_TAG|JSON_UNESCAPED_SLASHES)?>;
 var GAB_TILE_KEY = <?=json_encode($tile_key)?>;
 window.OSM_CARTO_API_KEY = <?=json_encode($gab_carto_key)?>;
-var GAB_ZOOM     = <?=$zoom?>;
-var GAB_CENTER   = [48.0, 10.0];   // Europe centrale
+<?php
+// Position d'arrivée demandée (bouton « Dessiner ici » de la vue 3D) : coordonnées validées
+$go_c = array(48.0, 10.0); $go_z = $zoom; $go_on = false; $go_draw = '';
+if (isset($_GET['glat'], $_GET['glng']) && is_numeric($_GET['glat']) && is_numeric($_GET['glng'])
+    && abs((float)$_GET['glat']) <= 85 && abs((float)$_GET['glng']) <= 180) {
+    $go_on = true;
+    $go_draw = (isset($_GET['gd']) && in_array($_GET['gd'], array('bbox','polygon'), true)) ? $_GET['gd'] : '';
+    $go_c = array((float)$_GET['glat'], (float)$_GET['glng']);
+    $go_z = (isset($_GET['gz']) && is_numeric($_GET['gz'])) ? max(2, min(19, (int)round((float)$_GET['gz']))) : 15;
+}
+?>
+var GAB_ZOOM     = <?=(int)$go_z?>;
+var GAB_CENTER   = <?=json_encode($go_c)?>;
+var GAB_GOTO     = <?=$go_on ? 'true' : 'false'?>;
+var GAB_GOTO_DRAW = <?=json_encode($go_draw)?>;   // outil de tracé à activer à l'arrivée ('bbox', 'polygon' ou '')   // position imposée : pas de recadrage automatique sur les photos
 var GAB_EXISTING = <?=$edit_data?>;
 var GAB_FOCUS    = <?=$focus_data?>;   // zone tout juste créée/modifiée : la carte s'y recadre
 var GAB_AJAX_URL = <?=json_encode($ajax_url)?>;
@@ -798,6 +998,47 @@ var GAB_ZONES    = <?=json_encode(array_map(function($z){return array(
     'coordinates'=>json_decode($z['coordinates'],true),
     'active'=>(bool)$z['active']);
 },$zones),JSON_HEX_TAG)?>;
+</script>
+<script>
+function gabTab(n){
+  var z=document.getElementById('gab-tab-zones'), a=document.getElementById('gab-tab-albums');
+  if(!z||!a) return;
+  z.style.display = n==='albums' ? 'none' : '';
+  a.style.display = n==='albums' ? '' : 'none';
+  document.getElementById('gab-tb-zones').className  = n==='albums' ? '' : 'on';
+  document.getElementById('gab-tb-albums').className = n==='albums' ? 'on' : '';
+  try{ sessionStorage.setItem('gabTab', n); }catch(e){}
+}
+/* Tri des listes (zones + albums liés) : chronologique (défaut, ordre du serveur) ou alphabétique */
+(function(){
+  var btn=document.getElementById('gab-sort'); if(!btn) return;
+  var lists=[];
+  ['zone-list','gab-tab-albums'].forEach(function(id){
+    var el=document.getElementById(id); if(!el) return;
+    var rows=[].slice.call(el.querySelectorAll('.zr[data-gname]'));
+    if(rows.length) lists.push({parent:rows[0].parentNode,rows:rows});
+  });
+  lists.forEach(function(l){ l.rows.forEach(function(r,i){ r._i=i; }); });
+  function apply(mode){
+    lists.forEach(function(l){
+      var a=l.rows.slice();
+      if(mode==='az') a.sort(function(x,y){ return x.getAttribute('data-gname').localeCompare(y.getAttribute('data-gname'),'fr',{numeric:true,sensitivity:'base'}); });
+      else a.sort(function(x,y){ return x._i-y._i; });
+      var anchor=document.createComment(''); l.parent.insertBefore(anchor,l.rows[0]);
+      a.forEach(function(r){ l.parent.insertBefore(r,anchor); });
+      l.parent.removeChild(anchor);
+      l.rows=a;
+    });
+    btn.textContent = mode==='az' ? '↕ Tri : A→Z' : '↕ Tri : récent';
+    btn.setAttribute('data-mode',mode);
+    try{ localStorage.setItem('gabSort',mode); }catch(e){}
+  }
+  btn.addEventListener('click',function(){ apply(btn.getAttribute('data-mode')==='az'?'recent':'az'); });
+  btn.setAttribute('data-mode','recent');
+  var m=''; try{ m=localStorage.getItem('gabSort')||''; }catch(e){}
+  if(m==='az') apply('az');
+})();
+(function(){ var n=''; try{ n=sessionStorage.getItem('gabTab')||''; }catch(e){} if(n==='albums') gabTab('albums'); })();
 </script>
 <script>
 (function(){
@@ -817,5 +1058,5 @@ var GAB_ZONES    = <?=json_encode(array_map(function($z){return array(
   });
 })();
 </script>
-<script src="<?=$root?>plugins/<?=GAB_FOLDER?>/js/geoalbum.js?v=<?=GAB_VERSION?>"></script>
+<script src="<?=$root?>plugins/<?=GAB_FOLDER?>/js/geoalbum.js?v=<?=GAB_VERSION?>.<?=(int)@filemtime(dirname(__FILE__)."/js/geoalbum.js")?>"></script>
 </body></html>

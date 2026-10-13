@@ -23,7 +23,7 @@ Ce plugin est distribué sous licence [GNU GPL-2.0](LICENSE).
 
 **Carte**
 - Regroupement (clusters) des photos à grande échelle, points individuels en zoomant.
-- Fond de carte par défaut au choix (Carto, OSM, Satellite, Topo, **OpenFreeMap**), modifiable à la volée. OpenFreeMap est un fond vectoriel gratuit, sans clé API, affiché avec MapLibre GL (nécessite WebGL ; sans WebGL ou sans accès réseau, la carte bascule automatiquement sur OSM).
+- Fond de carte par défaut au choix (Carto, OSM, **OSM France**, Satellite, **Satellite + noms**, Topo, **OpenFreeMap**), modifiable à la volée. Un bouton **🏙 3D** ouvre dans un nouvel onglet une vue inclinée avec bâtiments en relief et photos cliquables (lecture seule, sans tracé). Un clic sur un marqueur photo affiche son imagette. L'onglet **Albums liés** du panneau de droite liste les albums alimentés par le plugin (lien, zone, photos, période, dernière synchronisation). OpenFreeMap est un fond vectoriel gratuit, sans clé API, affiché avec MapLibre GL (nécessite WebGL ; sans WebGL ou sans accès réseau, la carte bascule automatiquement sur OSM).
 - Fonctionne de façon autonome, ou en complément d'[OSM Map Plus](https://piwigo.org/ext/extension_view.php?eid=1073) (partage de la clé API CartoDB).
 
 **Sécurité des données**
@@ -42,7 +42,7 @@ Ce plugin est distribué sous licence [GNU GPL-2.0](LICENSE).
 | Option | Description |
 |---|---|
 | Clé API CartoDB | Nécessaire depuis le 26/08/2026 pour le fond de carte « Carto Voyager » (gratuite sur [carto.com/basemaps/apikey](https://carto.com/basemaps/apikey/)). Partagée automatiquement avec OSM Map Plus si ce dernier en a une renseignée ; sinon, clé propre saisie ici. |
-| Fond de carte par défaut | Fond affiché à l'ouverture de la page de gestion : Carto (précoché), OSM, Satellite, Topo ou OpenFreeMap. Modifiable ensuite depuis la barre de la carte. |
+| Fond de carte par défaut | Fond affiché à l'ouverture de la page de gestion : Carto (précoché), OSM, OSM France, Satellite, Satellite + noms, Topo ou OpenFreeMap. Modifiable ensuite depuis la barre de la carte. |
 
 ## Utilisation
 
@@ -91,4 +91,4 @@ Code généré par [Claude](https://claude.ai) (Anthropic) via une session de d�
 
 ## Services externes utilisés
 
-La page de gestion charge Leaflet et ses extensions depuis unpkg.com, les tuiles des fonds de carte choisis (CARTO, OpenStreetMap, Esri, OpenTopoMap, OpenFreeMap) et la recherche de lieux via Nominatim (OpenStreetMap). Avec le fond OpenFreeMap, MapLibre GL est de plus chargé depuis unpkg.com, uniquement lorsque ce fond est sélectionné, et les données sont lues sur tiles.openfreemap.org.
+La page de gestion charge Leaflet et ses extensions depuis unpkg.com, les tuiles des fonds de carte choisis (CARTO, OpenStreetMap, OpenStreetMap France, Esri, OpenTopoMap, OpenFreeMap) et la recherche de lieux via Nominatim (OpenStreetMap). Avec le fond OpenFreeMap, MapLibre GL est de plus chargé depuis unpkg.com, uniquement lorsque ce fond est sélectionné, et les données sont lues sur tiles.openfreemap.org.

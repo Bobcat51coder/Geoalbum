@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Geo Album
-Version: 1.0.8
+Version: 1.1.0
 Description: Gestion simple des albums géographiques (zones GPS) sans SmartAlbums — associations photo/album gérées directement via image_category. Fonctionne de façon autonome ou en complément d'OSM Map Plus (partage sa clé API CartoDB).
 Plugin URI: https://piwigo.org/ext/extension_view.php?eid=1112
 Author: Bobcat-Fr
@@ -13,7 +13,7 @@ defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
 define('GAB_DIR',     dirname(__FILE__));
 define('GAB_PATH',    GAB_DIR . '/');
 define('GAB_FOLDER',  basename(GAB_DIR));
-define('GAB_VERSION', '1.0.8');
+define('GAB_VERSION', '1.1.0');
 
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
@@ -47,6 +47,13 @@ function gab_init()
 }
 
 add_event_handler('picture_inserted', 'gab_on_insert');
+// Événement réellement déclenché par Piwigo (upload, Piwigo Android/iOS, API pwg.images.add…),
+// APRÈS la lecture des métadonnées EXIF/GPS de la photo.
+add_event_handler('loc_end_add_uploaded_file', 'gab_on_uploaded');
+function gab_on_uploaded($image_infos)
+{
+    if (is_array($image_infos) && !empty($image_infos['id'])) gab_on_insert((int)$image_infos['id']);
+}
 function gab_on_insert($image_id)
 {
     $gps = gab_get_gps($image_id);
@@ -93,4 +100,25 @@ function gab_inject_menu_link()
     $js .= "if(!mn||document.querySelector('a[href*=geoalbum]'))return;";
     $js .= "li=document.createElement('li');li.innerHTML=" . json_encode($inner) . ";mn.appendChild(li);});";
     $template->append('head_elements', '<script>' . $js . '</script>');
+}
+
+/* ── Gestion des albums Piwigo : repère les albums liés à une zone ─────── */
+add_event_handler('loc_begin_admin_page', 'gab_admin_page_hook');
+function gab_admin_page_hook()
+{
+    global $template;
+    $page = isset($_GET['page']) ? (string)$_GET['page'] : '';
+    if (!preg_match('/^(albums|cat_list|cat_modify|album-\d+)$/', $page)) return;
+    $map = array();
+    foreach (gab_all_zones() as $z) {
+        $map[(int)$z['album_id']] = array(
+            'zone'   => $z['name'],
+            'active' => (int)$z['active'],
+            'url'    => get_root_url() . 'plugins/' . GAB_FOLDER . '/geoalbum.php',
+        );
+    }
+    if (!$map) return;
+    $js = 'window.GAB_ADMIN_ZONES=' . json_encode($map) . ';';
+    $src = get_root_url() . 'plugins/' . GAB_FOLDER . '/js/geoalbum-admin.js?v=' . GAB_VERSION . '.' . (int)@filemtime(GAB_PATH . 'js/geoalbum-admin.js');
+    $template->append('head_elements', '<script>' . $js . '</script><script src="' . htmlspecialchars($src, ENT_QUOTES) . '" defer></script>');
 }

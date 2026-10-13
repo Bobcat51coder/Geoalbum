@@ -55,6 +55,6 @@ class geoalbum_maintain extends PluginMaintain
         pwg_query('DROP TABLE IF EXISTS ' . GAB_TABLE);
         pwg_query('DROP TABLE IF EXISTS ' . GAB_MEMBERS_TABLE);
         pwg_query('DELETE FROM ' . CONFIG_TABLE . ' WHERE param IN ('
-            . '"geoalbum_carto_api_key","geoalbum_default_tile","gab_last_update","geoalbum_schema")');
+            . '"geoalbum_carto_api_key","geoalbum_default_tile","gab_last_update","geoalbum_schema","geoalbum_sync_times")');
     }
 }
