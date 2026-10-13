@@ -110,6 +110,8 @@ function gab_tile_choices()
         'carto'     => 'Carto',
         'osm'       => 'OSM',
         'satellite' => 'Satellite',
+        'satellite_noms' => 'Satellite + noms',
+        'osmfr'     => 'OSM France',
         'topo'      => 'Topo',
         'openfreemap' => 'OpenFreeMap',
     );

@@ -103,10 +103,51 @@ function gab_refresh($album_id)
 
 /* ── Synchronisation d'une zone ─────────────────────────────────────────── */
 
-function gab_sync_zone($zone)
+/* ── Dates de dernière synchronisation (réglage JSON { id_zone : horodatage }, sans modifier la base) ── */
+function gab_sync_times()
+{
+    global $conf;
+    $t = isset($conf['geoalbum_sync_times']) ? json_decode((string)$conf['geoalbum_sync_times'], true) : array();
+    return is_array($t) ? $t : array();
+}
+function gab_sync_times_save($add_ids = array(), $remove_ids = array())
+{
+    global $conf;
+    $t = gab_sync_times();
+    foreach ($add_ids as $i)    $t[(int)$i] = time();
+    foreach ($remove_ids as $i) unset($t[(int)$i]);
+    $json = json_encode($t);
+    conf_update_param('geoalbum_sync_times', $json);
+    $conf['geoalbum_sync_times'] = $json;
+}
+
+/* L'album de la zone existe-t-il encore dans Piwigo ? */
+function gab_album_exists($album_id)
+{
+    return (bool)pwg_db_fetch_assoc(pwg_query('SELECT id FROM ' . CATEGORIES_TABLE . ' WHERE id=' . (int)$album_id));
+}
+
+/* Renomme l'album lié à une zone (nom Piwigo). Retourne true si le nom a été modifié. */
+function gab_rename_album($album_id, $name)
+{
+    $name = trim((string)$name);
+    if ($name === '') return false;
+    $name = function_exists('mb_substr') ? mb_substr($name, 0, 255) : substr($name, 0, 255);
+    $album_id = (int)$album_id;
+    if ($album_id <= 0 || !gab_album_exists($album_id)) return false;
+    $cur = pwg_db_fetch_assoc(pwg_query('SELECT name FROM ' . CATEGORIES_TABLE . ' WHERE id=' . $album_id));
+    if ($cur && (string)$cur['name'] === $name) return false;
+    pwg_query('UPDATE ' . CATEGORIES_TABLE . ' SET name="' . pwg_db_real_escape_string($name) . '" WHERE id=' . $album_id);
+    if (function_exists('invalidate_user_cache')) invalidate_user_cache();
+    return true;
+}
+
+function gab_sync_zone($zone, $record = true)
 {
     $album_id = (int)$zone['album_id'];
     if ($album_id <= 0) return array('added'=>0, 'removed'=>0);
+    // Album supprimé dans Piwigo : on ne touche à rien (la zone reste signalée « album introuvable »)
+    if (!gab_album_exists($album_id)) return array('added'=>0, 'removed'=>0);
     $coords = json_decode($zone['coordinates'], true);
     if (!is_array($coords)) return array('added'=>0, 'removed'=>0);
 
@@ -136,12 +177,15 @@ function gab_sync_zone($zone)
         if (!isset($should[$id]) && gab_remove_photo($id, $album_id)) $removed++;
     }
     if ($added > 0 || $removed > 0) gab_refresh($album_id);
+    if ($record && !empty($zone['id'])) gab_sync_times_save(array((int)$zone['id']));
     return array('added'=>$added, 'removed'=>$removed);
 }
 
 function gab_sync_all_zones()
 {
-    foreach (gab_get_active_zones() as $zone) gab_sync_zone($zone);
+    $ids = array();
+    foreach (gab_get_active_zones() as $zone) { gab_sync_zone($zone, false); $ids[] = (int)$zone['id']; }
+    if ($ids) gab_sync_times_save($ids);
 }
 
 /* ── CRUD zones ──────────────────────────────────────────────────────────── */
@@ -169,8 +213,11 @@ function gab_all_zones()
 {
     $res = pwg_query('
         SELECT z.*, c.name AS album_name,
+            c.id AS cat_id,
             (SELECT COUNT(*) FROM ' . IMAGE_CATEGORY_TABLE . ' ic
-             WHERE ic.category_id=z.album_id) AS photo_count
+             WHERE ic.category_id=z.album_id) AS photo_count,
+            (SELECT COUNT(*) FROM ' . GAB_MEMBERS_TABLE . ' m
+             WHERE m.album_id=z.album_id) AS tracked_count
         FROM ' . GAB_TABLE . ' z
         LEFT JOIN ' . CATEGORIES_TABLE . ' c ON c.id=z.album_id
         ORDER BY z.id DESC');
@@ -210,6 +257,7 @@ function gab_delete_zone($id)
     $zone = gab_get_zone($id);
     if ($zone) { gab_clear_album((int)$zone['album_id']); gab_refresh((int)$zone['album_id']); }
     pwg_query('DELETE FROM ' . GAB_TABLE . ' WHERE id='.(int)$id);
+    gab_sync_times_save(array(), array((int)$id));
 }
 
 function gab_toggle_zone($id, $active)
@@ -235,7 +283,7 @@ function gab_create_album($name, $parent_id = null)
     }
     $parent_id = ($parent_id && (int)$parent_id > 0) ? (int)$parent_id : null;
     if (function_exists('create_virtual_category')) {
-        $info = create_virtual_category('GZ_' . $name, $parent_id);
+        $info = create_virtual_category($name, $parent_id);
         $id = 0;
         if (!empty($info['id']))                 $id = (int)$info['id'];
         elseif (!empty($info['category']['id'])) $id = (int)$info['category']['id'];
@@ -261,7 +309,7 @@ function gab_create_album($name, $parent_id = null)
     $rr  = pwg_db_fetch_assoc(pwg_query($rq));
     $cols = 'name,status,visible,commentable,global_rank' . ($parent_id ? ',id_uppercat' : '');
     // status "private" par défaut (voir commentaire ci-dessus)
-    $vals = '"'.pwg_db_real_escape_string('GZ_'.$name).'","private","true","true",'.(int)$rr['r']
+    $vals = '"'.pwg_db_real_escape_string($name).'","private","true","true",'.(int)$rr['r']
           . ($parent_id ? ','.$parent_id : '');
     pwg_query('INSERT INTO ' . CATEGORIES_TABLE . ' ('.$cols.') VALUES ('.$vals.')');
     $id = (int)pwg_db_insert_id();
