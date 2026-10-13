@@ -54,6 +54,7 @@
     <button type="submit" class="btn a">Enregistrer</button>
   </form>
   <p style="font-size:12px;color:#666">OpenFreeMap : fond vectoriel gratuit, sans clé API (nécessite WebGL ; si le navigateur ne le permet pas, la carte bascule sur OSM).</p>
+  <p style="font-size:12px;color:#666">Noms de lieux : OSM affiche les noms dans la langue locale ; « OSM France » privilégie les noms français ; OpenFreeMap affiche les noms en français, avec le nom local en seconde ligne pour les alphabets non latins ; « Satellite + noms » ajoute les toponymes à l'imagerie.</p>
 
   <p>
     <a class="button" href="{$GAB_MANAGE_URL}">→ Gérer les zones géographiques (version {$GAB_VERSION})</a>
