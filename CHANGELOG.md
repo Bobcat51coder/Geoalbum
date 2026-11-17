@@ -1,5 +1,15 @@
 # Changelog — Geo Album
 
+## 1.1.1 (français)
+- **Accès à Geo Album depuis le thème Bootstrap Darkroom** : pour l'administrateur, une entrée « 🌍 Albums géo » est ajoutée à la fin du menu « Découvrir » (via le bloc standard `mbSpecials` de Piwigo). L'ancien repérage par JavaScript reste en secours pour les thèmes sans ce bloc.
+- **Apostrophes dans les noms** : une zone dont le nom contient une apostrophe (« L'Estaque », « Saint-Jean-d'Angély »…) pouvait échouer à la création de l'album lié (erreur SQL). Le nom est désormais correctement protégé avant d'être transmis à Piwigo.
+- **Réglage du regroupement des points** : un menu à côté de « Regrouper les points » règle le niveau de regroupement / dégroupement quand on zoome à la molette : « Regroupement fort » (bulles conservées longtemps), « Normal » (comme avant), « Faible » et « Très faible » (les points se séparent très vite). Le choix est mémorisé dans le navigateur et s'applique tout de suite, sans recharger.
+
+## 1.1.1 (English)
+- **Access to Geo Album from the Bootstrap Darkroom theme**: for the administrator, a "🌍 Albums géo" entry is added at the end of the "Discover" menu (through Piwigo's standard `mbSpecials` block). The old JavaScript placement stays as a fallback for themes without that block.
+- **Apostrophes in names**: a zone whose name contains an apostrophe ("L'Estaque", "Saint-Jean-d'Angély"…) could fail when creating the linked album (SQL error). The name is now properly escaped before being passed to Piwigo.
+- **Point clustering setting**: a menu next to "Regrouper les points" sets how strongly points cluster / uncluster while zooming with the mouse wheel: "Regroupement fort" (bubbles kept for long), "Normal" (as before), "Faible" and "Très faible" (points split apart very quickly). The choice is remembered in the browser and applies immediately, without reloading.
+
 ## 1.1.0 (français)
 Version majeure regroupant tout ce qui a été développé depuis la 1.0.8 (dernière version publiée) : les versions 1.0.9 à 1.0.12 n'ont pas été publiées séparément.
 

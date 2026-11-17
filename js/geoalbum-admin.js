@@ -1,4 +1,4 @@
-/* Geo Album — repères dans la gestion des albums Piwigo (1.1.0) */
+/* Geo Album — repères dans la gestion des albums Piwigo (1.1.1) */
 (function () {
   var Z = window.GAB_ADMIN_ZONES || {};
   function info(id) { return Z[id]; }

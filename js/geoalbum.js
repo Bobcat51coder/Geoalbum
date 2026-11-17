@@ -1,5 +1,5 @@
 /**
- * geoalbum.js v4.2 (plugin 1.1.0 : fond OpenFreeMap / MapLibre GL ; Ctrl+molette zoome la carte)
+ * geoalbum.js v4.2 (plugin 1.1.1 : fond OpenFreeMap / MapLibre GL ; Ctrl+molette zoome la carte)
  * Variables : GAB_TILES, GAB_TILE_KEY, GAB_ZOOM, GAB_EXISTING, GAB_AJAX_URL, GAB_ZONES
  */
 var _map=null,_tile=null,_drawn=null,_layerAll=null,_layerSel=null,_drawer=null,_zoneLayer=null,_zonePins=null;
@@ -400,6 +400,45 @@ function gabTile(k){
     } else swap(base);
 }
 
+// Niveaux de regroupement des points : rayon (px) et zoom à partir duquel chaque point est affiché seul
+var GAB_CLUSTER_LEVELS={
+    fort:   {radius:100, atZoom:14},
+    normal: {radius:60,  atZoom:16},
+    faible: {radius:35,  atZoom:17},
+    mini:   {radius:15,  atZoom:18}
+};
+function _gabClusterLevel(){
+    var k='normal'; try{ k=localStorage.getItem('gabClusterLevel')||'normal'; }catch(e){}
+    return GAB_CLUSTER_LEVELS[k]?k:'normal';
+}
+// Fabrique un groupe de bulles selon le niveau courant. Les options de markercluster ne sont lues
+// qu'à la création : pour changer de niveau, on remplace donc le groupe par un neuf (modifier les
+// options d'un groupe existant donnait des regroupements incohérents).
+function _gabNewClusterGroup(isAll){
+    var lv=GAB_CLUSTER_LEVELS[_gabClusterLevel()];
+    var o={maxClusterRadius:lv.radius, showCoverageOnHover:false, animate:false,
+           disableClusteringAtZoom:lv.atZoom};
+    if(isAll){ o.animateAddingMarkers=false; o.removeOutsideVisibleBounds=true; o.chunkedLoading=true; o.chunkSize=300; }
+    return L.markerClusterGroup(o);
+}
+// Applique un niveau : reconstruit les groupes de photos avec les mêmes points
+function gabSetClusterLevel(k){
+    if(!GAB_CLUSTER_LEVELS[k]) k='normal';
+    try{ localStorage.setItem('gabClusterLevel',k); }catch(e){}
+    if(!_map||typeof L.markerClusterGroup!=='function') return;
+    ['all','sel'].forEach(function(w){
+        var old=(w==='all')?_layerAll:_layerSel;
+        if(!old||typeof old.addLayers!=='function') return;
+        var wasOn=_map.hasLayer(old), ls=old.getLayers();
+        if(wasOn) _map.removeLayer(old);
+        old.clearLayers();
+        var ng=_gabNewClusterGroup(w==='all');
+        if(ls.length) ng.addLayers(ls);   // avant l'ajout à la carte : regroupement calculé d'un coup
+        if(wasOn) ng.addTo(_map);
+        if(w==='all') _layerAll=ng; else _layerSel=ng;
+    });
+}
+
 function _gabMakeSelMarker(p, clustered){
     var m;
     if(clustered && typeof L.markerClusterGroup === 'function'){
@@ -729,19 +768,20 @@ function _build(){
     try{
     // Utiliser MarkerCluster si disponible (chargé par osm_map), sinon featureGroup simple
     if (typeof L.markerClusterGroup === 'function') {
+        var _lv = GAB_CLUSTER_LEVELS[_gabClusterLevel()];
         _layerAll = L.markerClusterGroup({
-            maxClusterRadius: 60, showCoverageOnHover: false,
+            maxClusterRadius: _lv.radius, showCoverageOnHover: false,
             animate: false, animateAddingMarkers: false,
             removeOutsideVisibleBounds: true,
             chunkedLoading: true, chunkSize: 300,
             // Au-delà de ce zoom, plus aucun regroupement : chaque point s'affiche
             // individuellement, pour un tracé de zone précis même en zone dense.
-            disableClusteringAtZoom: 16
+            disableClusteringAtZoom: _lv.atZoom
         }).addTo(_map);
         _layerSel = L.markerClusterGroup({
-            maxClusterRadius: 60, showCoverageOnHover: false,
+            maxClusterRadius: _lv.radius, showCoverageOnHover: false,
             animate: false,
-            disableClusteringAtZoom: 16
+            disableClusteringAtZoom: _lv.atZoom
         }).addTo(_map);
     } else {
         _layerAll = L.featureGroup().addTo(_map);
@@ -842,6 +882,8 @@ function _build(){
         });
     });
 
+    var selCl = document.getElementById('sel-cluster');
+    if(selCl){ selCl.value=_gabClusterLevel(); selCl.addEventListener('change',function(){ gabSetClusterLevel(this.value); }); }
     var selZoom = document.getElementById('sel-zoom');
     if(selZoom) selZoom.addEventListener('change', function(){ gabZoom(this.value); });
 

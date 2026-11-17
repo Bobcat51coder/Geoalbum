@@ -1,7 +1,7 @@
 <?php
 /*
 Plugin Name: Geo Album
-Version: 1.1.0
+Version: 1.1.1
 Description: Gestion simple des albums géographiques (zones GPS) sans SmartAlbums — associations photo/album gérées directement via image_category. Fonctionne de façon autonome ou en complément d'OSM Map Plus (partage sa clé API CartoDB).
 Plugin URI: https://piwigo.org/ext/extension_view.php?eid=1112
 Author: Bobcat-Fr
@@ -13,7 +13,7 @@ defined('PHPWG_ROOT_PATH') or die('Hacking attempt!');
 define('GAB_DIR',     dirname(__FILE__));
 define('GAB_PATH',    GAB_DIR . '/');
 define('GAB_FOLDER',  basename(GAB_DIR));
-define('GAB_VERSION', '1.1.0');
+define('GAB_VERSION', '1.1.1');
 
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
@@ -84,7 +84,26 @@ function gab_admin_menu($menu)
     return $menu;
 }
 
-/* ── Lien dans menu galerie (admin uniquement) ──────────────────────────── */
+/* ── Lien dans le menu « Découvrir » / « Spécial » (admin uniquement) ───────
+   Méthode standard de Piwigo : on ajoute une entrée au bloc mbSpecials.
+   Ce bloc alimente le menu « Découvrir » du thème Bootstrap Darkroom
+   (et la section « Spécial » du menu du thème par défaut). */
+add_event_handler('blockmanager_apply', 'gab_menu_specials');
+function gab_menu_specials($menu_ref_arr)
+{
+    if (!is_admin()) return;
+    $menu = &$menu_ref_arr[0];
+    if (!is_object($menu) || !method_exists($menu, 'get_block')) return;
+    if (($block = $menu->get_block('mbSpecials')) == null) return;
+    if (!is_array($block->data)) $block->data = array();
+    $block->data['geoalbum'] = array(
+        'URL'   => get_root_url() . 'plugins/' . GAB_FOLDER . '/geoalbum.php',
+        'TITLE' => 'Albums géographiques (Geo Album)',
+        'NAME'  => '🌍 Albums géo',
+    );
+}
+
+/* ── Lien dans menu galerie (admin uniquement) — secours si mbSpecials absent ── */
 add_event_handler('loc_end_page_header', 'gab_inject_menu_link');
 function gab_inject_menu_link()
 {

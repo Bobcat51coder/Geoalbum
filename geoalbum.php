@@ -28,7 +28,7 @@ if (empty($_GET['ajax'])) {
 if (!defined('GAB_DIR'))     define('GAB_DIR',     dirname(__FILE__));
 if (!defined('GAB_PATH'))    define('GAB_PATH',    GAB_DIR . '/');
 if (!defined('GAB_FOLDER'))  define('GAB_FOLDER',  basename(GAB_DIR));
-if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.1.0');
+if (!defined('GAB_VERSION')) define('GAB_VERSION', '1.1.1');
 global $prefixeTable;
 if (!defined('GAB_TABLE')) define('GAB_TABLE', $prefixeTable . 'geo_zones');
 if (!defined('GAB_MEMBERS_TABLE')) define('GAB_MEMBERS_TABLE', $prefixeTable . 'geo_zone_photos');
@@ -568,6 +568,12 @@ body{font-family:sans-serif;background:#f0f0f0;font-size:14px;color:#333}
         <input type="checkbox" id="chk-cluster" checked onchange="gabToggleCluster(this.checked)">
         Regrouper les points
       </label>
+      <select id="sel-cluster" style="width:120px" title="Niveau de regroupement des points quand on zoome avec la molette : « Fort » garde les bulles longtemps, « Très faible » sépare les points très vite">
+        <option value="fort">Regroupement fort</option>
+        <option value="normal">Normal</option>
+        <option value="faible">Faible</option>
+        <option value="mini">Très faible</option>
+      </select>
       <span class="sep">|</span>
       <select id="sel-datefield" style="width:115px" title="Sur quelle date porte le filtre">
         <option value="creation">📷 Prise de vue</option>

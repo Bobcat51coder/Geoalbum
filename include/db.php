@@ -283,7 +283,9 @@ function gab_create_album($name, $parent_id = null)
     }
     $parent_id = ($parent_id && (int)$parent_id > 0) ? (int)$parent_id : null;
     if (function_exists('create_virtual_category')) {
-        $info = create_virtual_category($name, $parent_id);
+        // create_virtual_category() insère le nom tel quel (single_insert n'échappe pas) :
+        // Piwigo lui passe des valeurs déjà échappées, on doit donc faire de même (apostrophes).
+        $info = create_virtual_category(pwg_db_real_escape_string($name), $parent_id);
         $id = 0;
         if (!empty($info['id']))                 $id = (int)$info['id'];
         elseif (!empty($info['category']['id'])) $id = (int)$info['category']['id'];
